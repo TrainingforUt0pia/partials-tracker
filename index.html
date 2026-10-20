@@ -85,6 +85,28 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
 .note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
 .empty { color: var(--muted); text-align: center; padding: 14px 0; }
 .msg { font-size: 13px; min-height: 18px; color: var(--good); margin: 6px 0 0; }
+.filebtn {
+  display: inline-flex; align-items: center; justify-content: center; position: relative;
+  min-height: 46px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); font-size: 16px; font-weight: 600;
+}
+.filebtn input { position: absolute; inset: 0; opacity: 0; width: 100%; min-height: 0; cursor: pointer; }
+.filebtn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.stack { display: grid; gap: 10px; }
+.chk {
+  display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font-size: 16px; cursor: pointer;
+}
+.chk input { width: 26px; height: 26px; min-height: 0; padding: 0; accent-color: var(--accent); }
+.chk .t b { overflow-wrap: anywhere; }
+.chk .s { display: block; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chk.done { background: var(--bg); }
+.chk.done .t { text-decoration: line-through; color: var(--muted); }
+.bigbtn { width: 100%; min-height: 64px; font-size: 20px; }
+.wait { font-weight: 700; font-size: 22px; font-variant-numeric: tabular-nums; text-align: right; }
+.row.pending { border-color: var(--warn); background: var(--warn-bg); }
+.row.pending .btns { grid-column: 1 / -1; display: flex; gap: 8px; }
+.row.pending .btns button { flex: 1; }
 @media (max-width: 420px) { .stats { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
@@ -109,6 +131,49 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
       <button id="saveTarget">Set</button>
     </div>
     <p class="note" id="targetNote"></p>
+  </section>
+
+  <section class="card" aria-labelledby="batH">
+    <h2 id="batH">Items To Weigh</h2>
+    <div class="stack">
+      <label class="filebtn">Load batch from Excel
+        <input type="file" id="batchFile" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12">
+      </label>
+      <p class="msg" id="batchMsg" role="status"></p>
+      <div id="batchBox" hidden class="stack">
+        <label>Current batch
+          <select id="batchSel"></select>
+        </label>
+        <div class="sub" id="batchMeta" style="font-size:13px;color:var(--muted)"></div>
+        <div class="bar" style="height:8px"><i id="batchBar" style="width:0"></i></div>
+        <div class="rows" id="batchItems"></div>
+        <button class="ghost small" id="batchRemove" type="button">Remove this batch</button>
+      </div>
+      <div class="empty" id="batchEmpty">Load the pick report to list the ingredients to weigh. Tick each one off as it is weighed.</div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="reqH">
+    <h2 id="reqH">Material requests</h2>
+    <div class="stack">
+      <div class="grid">
+        <label>Weigher name
+          <input type="text" id="reqName" list="names" placeholder="Name" autocapitalize="words">
+        </label>
+        <label>What do you need?
+          <select id="reqItem"></select>
+        </label>
+      </div>
+      <button class="bigbtn" id="reqBtn" type="button">Partials requested</button>
+      <p class="msg" id="reqMsg" role="status"></p>
+      <div class="rows" id="reqPending"></div>
+      <div class="stats">
+        <div class="stat"><span>Requests</span><b id="rCount">0</b></div>
+        <div class="stat"><span>Average wait</span><b id="rAvg">–</b></div>
+        <div class="stat"><span>Longest wait</span><b id="rMax">–</b></div>
+      </div>
+      <div class="rows" id="reqDone"></div>
+    </div>
   </section>
 
   <section class="card" aria-labelledby="entH">
@@ -178,9 +243,14 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
   var KEY = "partialsTracker.v1";
   var state = load();
 
+  function normalize(s) {
+    s.batches = s.batches || []; s.requests = s.requests || [];
+    s.currentBatch = s.currentBatch || null; s.lastName = s.lastName || "";
+    return s;
+  }
   function load() {
-    try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.entries && s.targets) return s; } catch (e) {}
-    return { targets: {}, entries: [] };
+    try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.entries && s.targets) return normalize(s); } catch (e) {}
+    return normalize({ targets: {}, entries: [] });
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { say("msg", "Could not save on this device.", true); } }
 
@@ -237,9 +307,238 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     });
 
     var names = {}; state.entries.forEach(function (e) { names[e.name] = 1; });
+    state.requests.forEach(function (r) { names[r.name] = 1; });
     var dl = $("names"); dl.textContent = "";
     Object.keys(names).sort().forEach(function (n) { var o = document.createElement("option"); o.value = n; dl.appendChild(o); });
+
+    renderBatch(); renderRequests();
   }
+
+  // ---------- helpers ----------
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function dateOf(ts) { var d = new Date(ts); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function clock(ts) { return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  function clock24(ts) { var d = new Date(ts); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
+  function dur(ms) {
+    var s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return h ? h + ":" + pad(m) + ":" + pad(s % 60) : m + ":" + pad(s % 60);
+  }
+  function fmtWeight(w, unit) {
+    if (typeof w !== "number" || isNaN(w)) return "";
+    var t = w.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " " + (unit || "");
+    if ((unit || "").toLowerCase() === "g" && w >= 1000) t += " (" + (w / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + " kg)";
+    return t.trim();
+  }
+  function curBatch() { return state.batches.filter(function (b) { return b.id === state.currentBatch; })[0] || null; }
+  function armed(btn, label, fn) {
+    btn.onclick = function () {
+      if (btn.dataset.armed) fn();
+      else { btn.dataset.armed = "1"; btn.textContent = "Tap again to confirm"; setTimeout(function () { btn.dataset.armed = ""; btn.textContent = label; }, 3000); }
+    };
+  }
+  function fillIdentity() {
+    var b = curBatch();
+    if (b) { $("lot").value = b.lot || ""; $("batchName").value = b.product || ""; }
+  }
+
+  // ---------- batch checklist ----------
+  function renderBatch() {
+    var has = state.batches.length > 0;
+    $("batchBox").hidden = !has; $("batchEmpty").hidden = has;
+    if (!has) return;
+    if (!curBatch()) state.currentBatch = state.batches[state.batches.length - 1].id;
+    var sel = $("batchSel"); sel.textContent = "";
+    state.batches.slice().reverse().forEach(function (b) {
+      var d = b.items.filter(function (i) { return i.done; }).length;
+      var o = document.createElement("option"); o.value = b.id;
+      o.textContent = (b.lot ? "LOT/IM " + b.lot : "No lot") + " · " + (b.product || "Batch") + " (" + d + "/" + b.items.length + ")";
+      sel.appendChild(o);
+    });
+    sel.value = state.currentBatch;
+    var b = curBatch(), done = b.items.filter(function (i) { return i.done; }).length;
+    $("batchMeta").textContent = (b.product || "Batch") + (b.lot ? " · LOT/IM " + b.lot : "") + " · " + done + " of " + b.items.length + " weighed" + (done === b.items.length && done ? " · All done" : "");
+    $("batchBar").style.width = (b.items.length ? done / b.items.length * 100 : 0) + "%";
+    var box = $("batchItems"); box.textContent = "";
+    b.items.forEach(function (it) {
+      var row = document.createElement("label"); row.className = "chk" + (it.done ? " done" : "");
+      var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!it.done;
+      cb.onchange = function () { it.done = cb.checked; it.doneAt = cb.checked ? Date.now() : null; save(); render(); };
+      var t = document.createElement("span"); t.className = "t";
+      var nm = document.createElement("b"); nm.textContent = it.item;
+      t.appendChild(nm); t.appendChild(document.createTextNode(" " + it.desc));
+      var s = document.createElement("span"); s.className = "s";
+      s.textContent = fmtWeight(it.weight, it.unit) + (it.done && it.doneAt ? " · weighed " + clock(it.doneAt) : "");
+      t.appendChild(s);
+      row.appendChild(cb); row.appendChild(t); box.appendChild(row);
+    });
+    armed($("batchRemove"), "Remove this batch", function () {
+      state.batches = state.batches.filter(function (x) { return x.id !== b.id; });
+      state.currentBatch = null; save(); render();
+    });
+  }
+
+  $("batchSel").addEventListener("change", function () { state.currentBatch = $("batchSel").value; save(); fillIdentity(); render(); });
+
+  // ---------- read an Excel pick report (.xlsx / .xlsm) ----------
+  async function inflateRaw(bytes) {
+    var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  async function unzip(buf) {
+    var u8 = new Uint8Array(buf), dv = new DataView(buf), i = u8.length - 22;
+    while (i >= 0 && dv.getUint32(i, true) !== 0x06054b50) i--;
+    if (i < 0) throw new Error("Not an Excel file.");
+    var count = dv.getUint16(i + 10, true), p = dv.getUint32(i + 16, true), dec = new TextDecoder(), files = {};
+    for (var k = 0; k < count; k++) {
+      var nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+      files[dec.decode(u8.subarray(p + 46, p + 46 + nl))] = { method: dv.getUint16(p + 10, true), size: dv.getUint32(p + 20, true), off: dv.getUint32(p + 42, true) };
+      p += 46 + nl + el + cl;
+    }
+    return {
+      names: Object.keys(files),
+      text: async function (name) {
+        var f = files[name]; if (!f) return null;
+        var s = f.off + 30 + dv.getUint16(f.off + 26, true) + dv.getUint16(f.off + 28, true);
+        var raw = u8.subarray(s, s + f.size);
+        return dec.decode(f.method === 0 ? raw : await inflateRaw(raw));
+      }
+    };
+  }
+  function xml(text) { return new DOMParser().parseFromString(text, "application/xml"); }
+  function textOf(el) { var o = ""; Array.prototype.forEach.call(el.getElementsByTagName("t"), function (t) { o += t.textContent; }); return o; }
+
+  async function readSheets(buf) {
+    var z = await unzip(buf), shared = [];
+    var ss = await z.text("xl/sharedStrings.xml");
+    if (ss) Array.prototype.forEach.call(xml(ss).getElementsByTagName("si"), function (si) { shared.push(textOf(si)); });
+    var sheets = z.names.filter(function (n) { return /^xl\/worksheets\/sheet\d+\.xml$/.test(n); })
+      .sort(function (a, b) { return parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10); });
+    var out = [];
+    for (var s = 0; s < sheets.length; s++) {
+      var rows = [];
+      Array.prototype.forEach.call(xml(await z.text(sheets[s])).getElementsByTagName("row"), function (row) {
+        var cells = {};
+        Array.prototype.forEach.call(row.getElementsByTagName("c"), function (c) {
+          var col = (c.getAttribute("r") || "").replace(/\d+/g, ""), t = c.getAttribute("t"), v = c.getElementsByTagName("v")[0], val;
+          if (t === "inlineStr") val = textOf(c);
+          else if (!v) return;
+          else if (t === "s") val = shared[parseInt(v.textContent, 10)] || "";
+          else val = v.textContent;
+          if (col && String(val).trim() !== "") cells[col] = String(val).trim();
+        });
+        rows.push({ n: parseInt(row.getAttribute("r"), 10), cells: cells });
+      });
+      out.push(rows);
+    }
+    return out;
+  }
+
+  // Pick report layout: "Product:" row (name in B, "LOT: ..." in F), then item rows (A = R-code, C = description, F = weight, H = unit)
+  function batchesFromRows(rows) {
+    var map = {}, order = [], cur = null;
+    rows.forEach(function (row, idx) {
+      var c = row.cells;
+      if (c.A && /^Product:/i.test(c.A)) {
+        var product = c.B || "", nx = rows[idx + 1];
+        if (nx && nx.n === row.n + 1 && !nx.cells.A && nx.cells.B && !/^Lot:/i.test(nx.cells.B)) product += nx.cells.B;
+        var lot = (c.F || "").replace(/^\s*LOT\s*:?\s*/i, "").replace(/_+/g, "").trim();
+        var key = lot + "|" + product;
+        if (!map[key]) { map[key] = { id: uid(), loaded: today(), product: product, lot: lot, items: [] }; order.push(key); }
+        cur = map[key];
+      } else if (c.A && /^[A-Za-z]{1,4}-\d+/.test(c.A)) {
+        if (!cur) { cur = { id: uid(), loaded: today(), product: "", lot: "", items: [] }; map["|"] = cur; order.push("|"); }
+        var w = parseFloat(c.F);
+        cur.items.push({ id: uid(), item: c.A, desc: c.C || "", weight: isNaN(w) ? null : w, unit: c.H || "", done: false, doneAt: null });
+      }
+    });
+    return order.map(function (k) { return map[k]; }).filter(function (b) { return b.items.length; });
+  }
+  function signature(b) { return b.lot + "|" + b.product + "|" + b.items.map(function (i) { return i.item + ":" + i.weight; }).join(","); }
+
+  $("batchFile").addEventListener("change", async function (ev) {
+    var f = ev.target.files[0]; ev.target.value = "";
+    if (!f) return;
+    if (!/\.(xlsx|xlsm)$/i.test(f.name)) { say("batchMsg", "Use an .xlsx or .xlsm file. Older .xls files can be re-saved as .xlsx.", true); return; }
+    if (typeof DecompressionStream === "undefined") { say("batchMsg", "This browser is too old to read Excel files. Update iOS or Chrome.", true); return; }
+    try {
+      var sheets = await readSheets(await f.arrayBuffer()), seen = {}, inFile = {}, added = [];
+      state.batches.forEach(function (b) { seen[signature(b)] = 1; });
+      sheets.forEach(function (rows) {
+        batchesFromRows(rows).forEach(function (b) {
+          var sg = signature(b), lk = b.lot + "|" + b.product;
+          // a workbook can hold copies of one pick report on several tabs: keep the first tab's version
+          if (!seen[sg] && !inFile[lk]) { seen[sg] = 1; inFile[lk] = 1; added.push(b); }
+        });
+      });
+      if (!added.length) { say("batchMsg", "No ingredient rows found, or this batch is already loaded.", true); return; }
+      added.forEach(function (b) { state.batches.push(b); });
+      state.currentBatch = added[0].id; save(); fillIdentity(); render();
+      say("batchMsg", "Loaded " + added.length + " batch" + (added.length > 1 ? "es" : "") + ", " + added.reduce(function (n, b) { return n + b.items.length; }, 0) + " ingredients.");
+    } catch (e) { say("batchMsg", "Could not read that file.", true); }
+  });
+
+  // ---------- material requests ----------
+  function renderRequests() {
+    var b = curBatch(), sel = $("reqItem"), keep = sel.value;
+    sel.textContent = "";
+    var o0 = document.createElement("option"); o0.value = ""; o0.textContent = "Any / next ingredient"; sel.appendChild(o0);
+    if (b) b.items.filter(function (i) { return !i.done; }).forEach(function (i) {
+      var o = document.createElement("option"); o.value = i.id; o.textContent = i.item + " " + i.desc; sel.appendChild(o);
+    });
+    sel.value = keep;
+
+    var pend = $("reqPending"); pend.textContent = "";
+    state.requests.filter(function (r) { return !r.receivedAt; }).forEach(function (r) {
+      var row = document.createElement("div"); row.className = "row pending";
+      var left = document.createElement("div");
+      var n = document.createElement("div"); n.className = "name"; n.textContent = r.name + " is waiting";
+      var s = document.createElement("div"); s.className = "sub"; s.textContent = "Asked at " + clock(r.requestedAt) + (r.item ? " · " + r.item : "");
+      left.appendChild(n); left.appendChild(s);
+      var w = document.createElement("div"); w.className = "wait"; w.dataset.since = r.requestedAt; w.textContent = dur(Date.now() - r.requestedAt);
+      var btns = document.createElement("div"); btns.className = "btns";
+      var got = document.createElement("button"); got.type = "button"; got.textContent = "Received";
+      got.onclick = function () { r.receivedAt = Date.now(); save(); render(); say("reqMsg", "Received. Waited " + dur(r.receivedAt - r.requestedAt) + "."); };
+      var cx = document.createElement("button"); cx.type = "button"; cx.className = "ghost"; cx.textContent = "Cancel";
+      armed(cx, "Cancel", function () { state.requests = state.requests.filter(function (x) { return x.id !== r.id; }); save(); render(); });
+      btns.appendChild(got); btns.appendChild(cx);
+      row.appendChild(left); row.appendChild(w); row.appendChild(btns); pend.appendChild(row);
+    });
+
+    var date = $("viewDate").value;
+    var day = state.requests.filter(function (r) { return dateOf(r.requestedAt) === date; });
+    var done = day.filter(function (r) { return r.receivedAt; });
+    var waits = done.map(function (r) { return r.receivedAt - r.requestedAt; });
+    $("rCount").textContent = day.length;
+    $("rAvg").textContent = waits.length ? dur(waits.reduce(function (a, c) { return a + c; }, 0) / waits.length) : "–";
+    $("rMax").textContent = waits.length ? dur(Math.max.apply(null, waits)) : "–";
+    var box = $("reqDone"); box.textContent = "";
+    done.slice().reverse().forEach(function (r) {
+      var row = document.createElement("div"); row.className = "row";
+      var left = document.createElement("div");
+      var n = document.createElement("div"); n.className = "name"; n.textContent = r.name;
+      var s = document.createElement("div"); s.className = "sub"; s.textContent = clock(r.requestedAt) + " to " + clock(r.receivedAt) + (r.item ? " · " + r.item : "");
+      left.appendChild(n); left.appendChild(s);
+      var w = document.createElement("div"); w.className = "pct none"; w.textContent = dur(r.receivedAt - r.requestedAt);
+      row.appendChild(left); row.appendChild(w); box.appendChild(row);
+    });
+  }
+
+  $("reqBtn").addEventListener("click", function () {
+    var name = $("reqName").value.trim();
+    if (!name) { say("reqMsg", "Enter your name first.", true); $("reqName").focus(); return; }
+    if (state.requests.some(function (r) { return !r.receivedAt && r.name.toLowerCase() === name.toLowerCase(); })) {
+      say("reqMsg", "You already have a request waiting. Tap Received when it arrives.", true); return;
+    }
+    var b = curBatch(), id = $("reqItem").value, it = b && b.items.filter(function (i) { return i.id === id; })[0];
+    state.lastName = name; if (!$("name").value) $("name").value = name;
+    state.requests.push({ id: uid(), name: name, lot: b ? b.lot : "", batchName: b ? b.product : "", item: it ? it.item + " " + it.desc : "", requestedAt: Date.now(), receivedAt: null });
+    save(); $("reqItem").value = ""; render(); say("reqMsg", "Request logged. Timer started.");
+  });
+  $("reqName").addEventListener("change", function () { state.lastName = $("reqName").value.trim(); save(); });
+  setInterval(function () {
+    Array.prototype.forEach.call(document.querySelectorAll("[data-since]"), function (el) { el.textContent = dur(Date.now() - Number(el.dataset.since)); });
+  }, 1000);
 
   var root = document.documentElement, THEME_KEY = "partialsTracker.theme";
   function isDark() {
@@ -270,7 +569,8 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     var name = $("name").value.trim(), done = num($("done").value), book = num($("book").value);
     if (!name || done === null || done < 0) { say("msg", "Enter a name and the partials weighed.", true); return; }
     state.entries.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), date: $("viewDate").value, shift: $("shift").value, name: name, done: done, book: book, lot: $("lot").value.trim(), batchName: $("batchName").value.trim() });
-    save(); $("done").value = ""; $("book").value = ""; $("lot").value = ""; $("batchName").value = ""; $("name").value = ""; render(); say("msg", "Saved.");
+    state.lastName = name; $("reqName").value = name;
+    save(); $("done").value = ""; $("book").value = ""; $("lot").value = ""; $("batchName").value = ""; fillIdentity(); render(); say("msg", "Saved.");
   });
 
   var HEAD = ["Date", "Shift", "Weigher", "LOT/IM number", "Batch name", "Partials weighed", "Partials in batch", "Target", "Completion %"];
@@ -328,32 +628,59 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function colLetter(i) { return String.fromCharCode(65 + i); }
 
-  function buildXlsx() {
-    var rows = [HEAD].concat(exportRows());
-    var sheetRows = rows.map(function (r, ri) {
-      var cells = r.map(function (v, ci) {
-        var ref = colLetter(ci) + (ri + 1);
-        if (ri === 0) return '<c r="' + ref + '" t="inlineStr" s="1"><is><t>' + esc(v) + "</t></is></c>";
-        if (v === "") return "";
-        if (typeof v === "number") return '<c r="' + ref + '"' + (ci === 8 ? ' s="2"' : "") + "><v>" + v + "</v></c>";
-        return '<c r="' + ref + '" t="inlineStr"><is><t>' + esc(v) + "</t></is></c>";
-      }).join("");
-      return '<row r="' + (ri + 1) + '">' + cells + "</row>";
-    }).join("");
+  function requestRows() {
+    return state.requests.slice().sort(function (a, b) { return a.requestedAt - b.requestedAt; }).map(function (r) {
+      var w = r.receivedAt ? (r.receivedAt - r.requestedAt) : null;
+      return [dateOf(r.requestedAt), r.name, r.lot || "", r.batchName || "", r.item || "", clock24(r.requestedAt), r.receivedAt ? clock24(r.receivedAt) : "", w === null ? "" : Math.round(w / 600) / 100, w === null ? "" : dur(w)];
+    });
+  }
+  function itemRows() {
+    var out = [];
+    state.batches.forEach(function (b) {
+      b.items.forEach(function (i) {
+        out.push([b.loaded || "", b.lot || "", b.product || "", i.item, i.desc, i.weight === null ? "" : i.weight, i.unit || "", i.done ? "Yes" : "No", i.doneAt ? dateOf(i.doneAt) + " " + clock24(i.doneAt) : ""]);
+      });
+    });
+    return out;
+  }
+
+  // sheets: [{ name, head, rows, pct }]  (pct = index of a column to show as a percentage)
+  function buildXlsx(sheets) {
     var X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    var files = [];
+    sheets.forEach(function (sh, si) {
+      var rows = [sh.head].concat(sh.rows);
+      var sheetRows = rows.map(function (r, ri) {
+        var cells = r.map(function (v, ci) {
+          var ref = colLetter(ci) + (ri + 1);
+          if (ri === 0) return '<c r="' + ref + '" t="inlineStr" s="1"><is><t>' + esc(v) + "</t></is></c>";
+          if (v === "") return "";
+          if (typeof v === "number") return '<c r="' + ref + '"' + (ci === sh.pct ? ' s="2"' : "") + "><v>" + v + "</v></c>";
+          return '<c r="' + ref + '" t="inlineStr"><is><t>' + esc(v) + "</t></is></c>";
+        }).join("");
+        return '<row r="' + (ri + 1) + '">' + cells + "</row>";
+      }).join("");
+      files.push({ name: "xl/worksheets/sheet" + (si + 1) + ".xml", data: X + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="' + sh.head.length + '" width="20" customWidth="1"/></cols><sheetData>' + sheetRows + "</sheetData></worksheet>" });
+    });
+    var n = sheets.length, REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    var overrides = sheets.map(function (s, i) { return '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'; }).join("");
+    var wbSheets = sheets.map(function (s, i) { return '<sheet name="' + esc(s.name) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>'; }).join("");
+    var rels = sheets.map(function (s, i) { return '<Relationship Id="rId' + (i + 1) + '" Type="' + REL + '/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>'; }).join("");
     return zip([
-      { name: "[Content_Types].xml", data: X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
-      { name: "_rels/.rels", data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
-      { name: "xl/workbook.xml", data: X + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Partials" sheetId="1" r:id="rId1"/></sheets></workbook>' },
-      { name: "xl/_rels/workbook.xml.rels", data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
-      { name: "xl/styles.xml", data: X + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>' },
-      { name: "xl/worksheets/sheet1.xml", data: X + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="12" customWidth="1"/><col min="2" max="2" width="10" customWidth="1"/><col min="3" max="5" width="20" customWidth="1"/><col min="6" max="9" width="18" customWidth="1"/></cols><sheetData>' + sheetRows + "</sheetData></worksheet>" }
-    ]);
+      { name: "[Content_Types].xml", data: X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' + overrides + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { name: "_rels/.rels", data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="' + REL + '/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: "xl/workbook.xml", data: X + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="' + REL + '"><sheets>' + wbSheets + "</sheets></workbook>" },
+      { name: "xl/_rels/workbook.xml.rels", data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels + '<Relationship Id="rId' + (n + 1) + '" Type="' + REL + '/styles" Target="styles.xml"/></Relationships>' },
+      { name: "xl/styles.xml", data: X + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>' }
+    ].concat(files));
   }
 
   $("xlsx").addEventListener("click", function () {
-    if (!state.entries.length) { say("dataMsg", "No entries to export yet.", true); return; }
-    deliver(buildXlsx(), "partials-" + today() + ".xlsx", "Excel file ready.");
+    if (!state.entries.length && !state.requests.length && !state.batches.length) { say("dataMsg", "Nothing to export yet.", true); return; }
+    var sheets = [{ name: "Partials", head: HEAD, rows: exportRows(), pct: 8 }];
+    if (state.requests.length) sheets.push({ name: "Material requests", head: ["Date", "Weigher", "LOT/IM number", "Batch name", "Item needed", "Requested at", "Received at", "Wait (min)", "Wait (m:ss)"], rows: requestRows(), pct: -1 });
+    if (state.batches.length) sheets.push({ name: "Batch items", head: ["Loaded", "LOT/IM number", "Batch name", "Item", "Description", "Weight", "Unit", "Weighed", "Weighed at"], rows: itemRows(), pct: -1 });
+    deliver(buildXlsx(sheets), "partials-" + today() + ".xlsx", "Excel file ready.");
   });
 
   function copy(text, ok) {
@@ -370,7 +697,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     try {
       var s = JSON.parse($("restoreText").value);
       if (!s || !Array.isArray(s.entries) || typeof s.targets !== "object") throw 0;
-      state = s; save(); render(); $("restoreText").value = ""; $("restoreBox").hidden = true; say("dataMsg", "Backup restored.");
+      state = normalize(s); save(); render(); $("restoreText").value = ""; $("restoreBox").hidden = true; say("dataMsg", "Backup restored.");
     } catch (e) { say("dataMsg", "That is not a valid backup.", true); }
   });
 
@@ -378,6 +705,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     navigator.serviceWorker.register("sw.js").catch(function () {});
   }
 
+  $("reqName").value = $("name").value = state.lastName;
   render();
 })();
 </script>

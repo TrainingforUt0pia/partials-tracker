@@ -1,5 +1,5 @@
-// Caches the app shell so it opens with no signal. Bump CACHE when index.html changes.
-var CACHE = "partials-v1";
+// Caches the app so it opens with no signal. Online it always tries the network first, so updates arrive on the next open.
+var CACHE = "partials-v2";
 var FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", function (e) {
@@ -12,5 +12,9 @@ self.addEventListener("activate", function (e) {
 });
 self.addEventListener("fetch", function (e) {
   if (e.request.method !== "GET") return;
-  e.respondWith(caches.match(e.request).then(function (hit) { return hit || fetch(e.request); }));
+  e.respondWith(fetch(e.request).then(function (res) {
+    var copy = res.clone();
+    caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+    return res;
+  }).catch(function () { return caches.match(e.request); }));
 });
