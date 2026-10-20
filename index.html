@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6fa8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Partials">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Partials Tracker</title>
+<style>
+:root {
+  --bg: #eef5fa; --card: #ffffff; --ink: #16222c; --muted: #566a7a; --line: #d3e1ec;
+  --accent: #1f6fa8; --accent-ink: #ffffff;
+  --good: #1a62a0; --good-bg: #d9ebf8; --warn: #9a6a00; --warn-bg: #fbefc9; --bad: #b3261e; --bad-bg: #f9dedc;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101a22; --card: #18242e; --ink: #e6eff6; --muted: #9fb2c2; --line: #2b3d4c;
+    --accent: #8cc8f0; --accent-ink: #0b1822;
+    --good: #8cc8f0; --good-bg: #183349; --warn: #f0c35a; --warn-bg: #3b3012; --bad: #ff9c94; --bad-bg: #44201d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101a22; --card: #18242e; --ink: #e6eff6; --muted: #9fb2c2; --line: #2b3d4c;
+  --accent: #8cc8f0; --accent-ink: #0b1822;
+  --good: #8cc8f0; --good-bg: #183349; --warn: #f0c35a; --warn-bg: #3b3012; --bad: #ff9c94; --bad-bg: #44201d;
+  color-scheme: dark;
+}
+.head-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+[hidden] { display: none !important; }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 22px; margin: 0; letter-spacing: .2px; }
+h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+input, select, button { font: inherit; }
+input, select {
+  width: 100%; min-height: 46px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--ink);
+}
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.grid .full { grid-column: 1 / -1; }
+button {
+  min-height: 46px; padding: 8px 16px; border: 0; border-radius: 8px; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); font-weight: 600;
+}
+button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
+.target-row { display: flex; gap: 10px; align-items: end; }
+.target-row label { flex: 1; }
+.big { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.stat span { display: block; font-size: 12px; color: var(--muted); }
+.stat b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.rows { display: grid; gap: 8px; }
+.row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+}
+.row .name { font-weight: 600; overflow-wrap: anywhere; }
+.row .sub { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pct { font-weight: 700; font-size: 18px; padding: 2px 10px; border-radius: 999px; font-variant-numeric: tabular-nums; text-align: center; }
+.pct.good { background: var(--good-bg); color: var(--good); }
+.pct.warn { background: var(--warn-bg); color: var(--warn); }
+.pct.bad { background: var(--bad-bg); color: var(--bad); }
+.pct.none { background: var(--bg); color: var(--muted); }
+.bar { grid-column: 1 / -1; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+.empty { color: var(--muted); text-align: center; padding: 14px 0; }
+.msg { font-size: 13px; min-height: 18px; color: var(--good); margin: 6px 0 0; }
+@media (max-width: 420px) { .stats { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Partials Tracker</h1>
+    <div class="head-right">
+      <button class="ghost small" id="themeBtn" type="button" aria-label="Switch between light and dark theme">Dark mode</button>
+      <label style="grid-auto-flow:column;align-items:center;gap:8px">Date
+        <input type="date" id="viewDate" style="width:auto">
+      </label>
+    </div>
+  </header>
+
+  <section class="card" aria-labelledby="tgtH">
+    <h2 id="tgtH">Required partials for this day</h2>
+    <div class="target-row">
+      <label>Target per shift
+        <input type="number" id="target" inputmode="numeric" min="1" step="1" placeholder="e.g. 400">
+      </label>
+      <button id="saveTarget">Set</button>
+    </div>
+    <p class="note" id="targetNote"></p>
+  </section>
+
+  <section class="card" aria-labelledby="entH">
+    <h2 id="entH">Log a shift</h2>
+    <form id="entry" autocomplete="off">
+      <div class="grid">
+        <label class="full">Weigher name
+          <input type="text" id="name" list="names" required placeholder="Name" autocapitalize="words">
+          <datalist id="names"></datalist>
+        </label>
+        <label>Shift
+          <select id="shift"><option>Day</option><option>Evening</option><option>Night</option></select>
+        </label>
+        <label>Partials weighed
+          <input type="number" id="done" inputmode="numeric" min="0" step="1" required>
+        </label>
+        <label>LOT/IM number
+          <input type="text" id="lot" placeholder="LOT/IM number" autocapitalize="characters">
+        </label>
+        <label>Batch name
+          <input type="text" id="batchName" placeholder="Batch name">
+        </label>
+        <label class="full">Partials in the batch
+          <input type="number" id="book" inputmode="numeric" min="0" step="1" placeholder="Total the batch consists of">
+        </label>
+        <div class="full"><button type="submit" style="width:100%">Save entry</button></div>
+      </div>
+      <p class="msg" id="msg" role="status"></p>
+    </form>
+  </section>
+
+  <section class="card" aria-labelledby="sumH">
+    <h2 id="sumH">Day summary</h2>
+    <div class="stats">
+      <div class="stat"><span>Weighed</span><b id="sDone">0</b></div>
+      <div class="stat"><span>Target (each)</span><b id="sTarget">–</b></div>
+      <div class="stat"><span>Average completion</span><b id="sAvg">–</b></div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="logH">
+    <h2 id="logH">Entries</h2>
+    <div class="rows" id="rows"></div>
+  </section>
+
+  <section class="card">
+    <h2>Data</h2>
+    <div class="actions">
+      <button class="small" id="xlsx">Export to Excel</button>
+      <button class="ghost small" id="csv">Export CSV</button>
+      <button class="ghost small" id="backup">Copy backup</button>
+      <button class="ghost small" id="restore">Restore from backup</button>
+    </div>
+    <div id="restoreBox" hidden style="margin-top:10px;display:grid;gap:8px">
+      <label>Paste your backup here
+        <textarea id="restoreText" rows="4" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit"></textarea>
+      </label>
+      <button class="small" id="restoreGo" type="button">Restore</button>
+    </div>
+    <p class="note">Saved on this device only. Use Export or Copy backup to move data to another phone or computer.</p>
+    <p class="msg" id="dataMsg" role="status"></p>
+  </section>
+</main>
+
+<script>
+(function () {
+  var KEY = "partialsTracker.v1";
+  var state = load();
+
+  function load() {
+    try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.entries && s.targets) return s; } catch (e) {}
+    return { targets: {}, entries: [] };
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { say("msg", "Could not save on this device.", true); } }
+
+  var $ = function (id) { return document.getElementById(id); };
+  function today() { var d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }
+  function say(id, t, bad) { var el = $(id); el.textContent = t; el.style.color = bad ? "var(--bad)" : "var(--good)"; setTimeout(function () { el.textContent = ""; }, 3500); }
+  function num(v) { var n = parseInt(v, 10); return isNaN(n) ? null : n; }
+
+  // target for a date = the most recent value set on or before it
+  function targetFor(date) {
+    var best = null;
+    Object.keys(state.targets).forEach(function (d) { if (d <= date && (best === null || d > best)) best = d; });
+    return best === null ? { value: null, from: null } : { value: state.targets[best], from: best };
+  }
+  function pctClass(p) { return p === null ? "none" : p >= 100 ? "good" : p >= 80 ? "warn" : "bad"; }
+
+  function render() {
+    var date = $("viewDate").value;
+    var t = targetFor(date);
+    $("target").value = state.targets[date] != null ? state.targets[date] : (t.value != null ? t.value : "");
+    $("targetNote").textContent = t.value == null ? "No target set yet. Enter one and press Set."
+      : state.targets[date] != null ? "Target set for this date."
+      : "Carried over from " + t.from + ". Press Set to change it for this date onward.";
+
+    var list = state.entries.filter(function (e) { return e.date === date; });
+    var done = 0, pcts = [];
+    list.forEach(function (e) { done += e.done; if (t.value) pcts.push(e.done / t.value * 100); });
+    $("sDone").textContent = done.toLocaleString();
+    $("sTarget").textContent = t.value != null ? t.value.toLocaleString() : "–";
+    $("sAvg").textContent = pcts.length ? Math.round(pcts.reduce(function (a, b) { return a + b; }, 0) / pcts.length) + "%" : "–";
+
+    var rows = $("rows"); rows.textContent = "";
+    if (!list.length) { var em = document.createElement("div"); em.className = "empty"; em.textContent = "No entries for this date yet."; rows.appendChild(em); }
+    list.forEach(function (e) {
+      var p = t.value ? e.done / t.value * 100 : null;
+      var r = document.createElement("div"); r.className = "row";
+      var left = document.createElement("div");
+      var n = document.createElement("div"); n.className = "name"; n.textContent = e.name;
+      var s = document.createElement("div"); s.className = "sub";
+      s.textContent = e.shift + " · " + e.done.toLocaleString() + " weighed" + (t.value ? " of " + t.value.toLocaleString() : "") + (e.book != null ? " · batch " + e.book.toLocaleString() : "");
+      var ident = [e.lot ? "LOT/IM " + e.lot : "", e.batchName || ""].filter(Boolean).join(" · ");
+      var id2 = document.createElement("div"); id2.className = "sub"; id2.textContent = ident;
+      left.appendChild(n); left.appendChild(s);
+      if (ident) left.appendChild(id2);
+      var pc = document.createElement("div"); pc.className = "pct " + pctClass(p); pc.textContent = p === null ? "–" : Math.round(p) + "%";
+      var bar = document.createElement("div"); bar.className = "bar"; var fill = document.createElement("i"); fill.style.width = Math.min(100, p || 0) + "%"; bar.appendChild(fill);
+      var del = document.createElement("button"); del.className = "ghost small"; del.textContent = "Remove"; del.style.gridColumn = "1 / -1";
+      del.onclick = function () {
+        if (del.dataset.armed) { state.entries = state.entries.filter(function (x) { return x.id !== e.id; }); save(); render(); }
+        else { del.dataset.armed = "1"; del.textContent = "Tap again to confirm"; setTimeout(function () { del.dataset.armed = ""; del.textContent = "Remove"; }, 3000); }
+      };
+      r.appendChild(left); r.appendChild(pc); r.appendChild(bar); r.appendChild(del);
+      rows.appendChild(r);
+    });
+
+    var names = {}; state.entries.forEach(function (e) { names[e.name] = 1; });
+    var dl = $("names"); dl.textContent = "";
+    Object.keys(names).sort().forEach(function (n) { var o = document.createElement("option"); o.value = n; dl.appendChild(o); });
+  }
+
+  var root = document.documentElement, THEME_KEY = "partialsTracker.theme";
+  function isDark() {
+    var t = root.getAttribute("data-theme");
+    return t ? t === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function paintThemeBtn() { $("themeBtn").textContent = isDark() ? "Light mode" : "Dark mode"; }
+  try { var saved = localStorage.getItem(THEME_KEY); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  $("themeBtn").addEventListener("click", function () {
+    var next = isDark() ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    paintThemeBtn();
+  });
+  paintThemeBtn();
+
+  $("viewDate").value = today();
+  $("viewDate").addEventListener("change", render);
+
+  $("saveTarget").addEventListener("click", function () {
+    var v = num($("target").value);
+    if (!v || v < 1) { say("targetNote", "Enter a target above zero.", true); return; }
+    state.targets[$("viewDate").value] = v; save(); render();
+  });
+
+  $("entry").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var name = $("name").value.trim(), done = num($("done").value), book = num($("book").value);
+    if (!name || done === null || done < 0) { say("msg", "Enter a name and the partials weighed.", true); return; }
+    state.entries.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), date: $("viewDate").value, shift: $("shift").value, name: name, done: done, book: book, lot: $("lot").value.trim(), batchName: $("batchName").value.trim() });
+    save(); $("done").value = ""; $("book").value = ""; $("lot").value = ""; $("batchName").value = ""; $("name").value = ""; render(); say("msg", "Saved.");
+  });
+
+  var HEAD = ["Date", "Shift", "Weigher", "LOT/IM number", "Batch name", "Partials weighed", "Partials in batch", "Target", "Completion %"];
+  function exportRows() {
+    return state.entries.slice().sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }).map(function (e) {
+      var t = targetFor(e.date).value;
+      return [e.date, e.shift, e.name, e.lot || "", e.batchName || "", e.done, e.book == null ? "" : e.book, t == null ? "" : t, t ? e.done / t : ""];
+    });
+  }
+
+  // hand a file to the user: share sheet on phones, normal download elsewhere
+  function deliver(blob, filename, okMsg) {
+    var file;
+    try { file = new File([blob], filename, { type: blob.type }); } catch (e) {}
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: filename }).then(function () { say("dataMsg", okMsg); }, function (err) {
+        if (err && err.name !== "AbortError") say("dataMsg", "Could not share the file.", true);
+      });
+      return;
+    }
+    try {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      say("dataMsg", okMsg);
+    } catch (e) { say("dataMsg", "Export not supported here. Use Copy backup.", true); }
+  }
+
+  $("csv").addEventListener("click", function () {
+    var q = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+    var lines = [HEAD.join(",")].concat(exportRows().map(function (r) {
+      r = r.slice(); r[1] = q(r[1]); r[2] = q(r[2]); r[3] = q(r[3]); r[4] = q(r[4]); r[8] = r[8] === "" ? "" : (r[8] * 100).toFixed(1);
+      return r.join(",");
+    }));
+    deliver(new Blob([lines.join("\n")], { type: "text/csv" }), "partials-" + today() + ".csv", "CSV exported.");
+  });
+
+  // ---- real .xlsx export (no library): a zip of XML parts, stored uncompressed ----
+  var crcTable = (function () { var t = [], c, n, k; for (n = 0; n < 256; n++) { c = n; for (k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(b) { var c = 0xFFFFFFFF; for (var i = 0; i < b.length; i++) c = crcTable[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function zip(files) {
+    var enc = new TextEncoder(), parts = [], central = [], offset = 0;
+    function u16(v) { return [v & 255, (v >> 8) & 255]; }
+    function u32(v) { return [v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255]; }
+    files.forEach(function (f) {
+      var name = enc.encode(f.name), data = enc.encode(f.data), crc = crc32(data);
+      var local = [0x50, 0x4B, 3, 4].concat(u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0));
+      parts.push(new Uint8Array(local), name, data);
+      central.push(new Uint8Array([0x50, 0x4B, 1, 2].concat(u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset))), name);
+      offset += local.length + name.length + data.length;
+    });
+    var csize = 0; central.forEach(function (p) { csize += p.length; });
+    var end = new Uint8Array([0x50, 0x4B, 5, 6].concat(u16(0), u16(0), u16(files.length), u16(files.length), u32(csize), u32(offset), u16(0)));
+    return new Blob(parts.concat(central, [end]), { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function colLetter(i) { return String.fromCharCode(65 + i); }
+
+  function buildXlsx() {
+    var rows = [HEAD].concat(exportRows());
+    var sheetRows = rows.map(function (r, ri) {
+      var cells = r.map(function (v, ci) {
+        var ref = colLetter(ci) + (ri + 1);
+        if (ri === 0) return '<c r="' + ref + '" t="inlineStr" s="1"><is><t>' + esc(v) + "</t></is></c>";
+        if (v === "") return "";
+        if (typeof v === "number") return '<c r="' + ref + '"' + (ci === 8 ? ' s="2"' : "") + "><v>" + v + "</v></c>";
+        return '<c r="' + ref + '" t="inlineStr"><is><t>' + esc(v) + "</t></is></c>";
+      }).join("");
+      return '<row r="' + (ri + 1) + '">' + cells + "</row>";
+    }).join("");
+    var X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    return zip([
+      { name: "[Content_Types].xml", data: X + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { name: "_rels/.rels", data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: "xl/workbook.xml", data: X + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Partials" sheetId="1" r:id="rId1"/></sheets></workbook>' },
+      { name: "xl/_rels/workbook.xml.rels", data: X + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { name: "xl/styles.xml", data: X + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>' },
+      { name: "xl/worksheets/sheet1.xml", data: X + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="12" customWidth="1"/><col min="2" max="2" width="10" customWidth="1"/><col min="3" max="5" width="20" customWidth="1"/><col min="6" max="9" width="18" customWidth="1"/></cols><sheetData>' + sheetRows + "</sheetData></worksheet>" }
+    ]);
+  }
+
+  $("xlsx").addEventListener("click", function () {
+    if (!state.entries.length) { say("dataMsg", "No entries to export yet.", true); return; }
+    deliver(buildXlsx(), "partials-" + today() + ".xlsx", "Excel file ready.");
+  });
+
+  function copy(text, ok) {
+    var done = function () { say("dataMsg", ok); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
+    function fallback() {
+      var ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); done(); } catch (e) { say("dataMsg", "Copy failed.", true); } ta.remove();
+    }
+  }
+  $("backup").addEventListener("click", function () { copy(JSON.stringify(state), "Backup copied. Paste it somewhere safe."); });
+  $("restore").addEventListener("click", function () { $("restoreBox").hidden = !$("restoreBox").hidden; });
+  $("restoreGo").addEventListener("click", function () {
+    try {
+      var s = JSON.parse($("restoreText").value);
+      if (!s || !Array.isArray(s.entries) || typeof s.targets !== "object") throw 0;
+      state = s; save(); render(); $("restoreText").value = ""; $("restoreBox").hidden = true; say("dataMsg", "Backup restored.");
+    } catch (e) { say("dataMsg", "That is not a valid backup.", true); }
+  });
+
+  if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
