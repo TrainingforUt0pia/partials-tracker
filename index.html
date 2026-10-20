@@ -85,6 +85,11 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
 .note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
 .empty { color: var(--muted); text-align: center; padding: 14px 0; }
 .msg { font-size: 13px; min-height: 18px; color: var(--good); margin: 6px 0 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { min-height: 34px; padding: 4px 12px; font-size: 13px; background: transparent; color: var(--ink); border-radius: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+body[data-role="puller"] .w-only { display: none !important; }
+body[data-role="weigher"] .p-only { display: none !important; }
 .filebtn {
   display: inline-flex; align-items: center; justify-content: center; position: relative;
   min-height: 46px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
@@ -110,19 +115,40 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
 @media (max-width: 420px) { .stats { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
-<body>
+<body data-role="weigher">
 <main>
   <header>
     <h1>Partials Tracker</h1>
     <div class="head-right">
+      <div class="seg" role="group" aria-label="Who is using this phone"><button type="button" id="roleW" aria-pressed="true">Weigher</button><button type="button" id="roleP" aria-pressed="false">Puller</button></div>
       <button class="ghost small" id="themeBtn" type="button" aria-label="Switch between light and dark theme">Dark mode</button>
-      <label style="grid-auto-flow:column;align-items:center;gap:8px">Date
+      <label class="w-only" style="grid-auto-flow:column;align-items:center;gap:8px">Date
         <input type="date" id="viewDate" style="width:auto">
       </label>
     </div>
   </header>
 
-  <section class="card" aria-labelledby="tgtH">
+  <section class="card p-only" aria-labelledby="pullH">
+    <h2 id="pullH">Items To Pull</h2>
+    <div class="stack">
+      <label class="filebtn">Load batch from Excel
+        <input type="file" id="pFile" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12">
+      </label>
+      <p class="msg" id="pMsg" role="status"></p>
+      <div id="pBox" hidden class="stack">
+        <label>Current batch
+          <select id="pSel"></select>
+        </label>
+        <div class="sub" id="pMeta" style="font-size:13px;color:var(--muted)"></div>
+        <div class="bar" style="height:8px"><i id="pBar" style="width:0"></i></div>
+        <div class="rows" id="pItems"></div>
+        <button class="ghost small" id="pRemove" type="button">Remove this batch</button>
+      </div>
+      <div class="empty" id="pEmpty">Load the pick report to list the ingredients to pull. Tick each one off as it is pulled.</div>
+    </div>
+  </section>
+
+  <section class="card w-only" aria-labelledby="tgtH">
     <h2 id="tgtH">Required partials for this day</h2>
     <div class="target-row">
       <label>Target per shift
@@ -133,7 +159,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     <p class="note" id="targetNote"></p>
   </section>
 
-  <section class="card" aria-labelledby="entH">
+  <section class="card w-only" aria-labelledby="entH">
     <h2 id="entH">Log a shift</h2>
     <form id="entry" autocomplete="off">
       <div class="grid">
@@ -162,7 +188,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     </form>
   </section>
 
-  <section class="card" aria-labelledby="batH">
+  <section class="card w-only" aria-labelledby="batH">
     <h2 id="batH">Items To Weigh</h2>
     <div class="stack">
       <label class="filebtn">Load batch from Excel
@@ -182,7 +208,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     </div>
   </section>
 
-  <section class="card" aria-labelledby="reqH">
+  <section class="card w-only" aria-labelledby="reqH">
     <h2 id="reqH">Material requests</h2>
     <div class="stack">
       <div class="grid">
@@ -205,7 +231,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     </div>
   </section>
 
-  <section class="card" aria-labelledby="sumH">
+  <section class="card w-only" aria-labelledby="sumH">
     <h2 id="sumH">Day summary</h2>
     <div class="stats">
       <div class="stat"><span>Weighed</span><b id="sDone">0</b></div>
@@ -214,7 +240,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     </div>
   </section>
 
-  <section class="card" aria-labelledby="logH">
+  <section class="card w-only" aria-labelledby="logH">
     <h2 id="logH">Entries</h2>
     <div class="rows" id="rows"></div>
   </section>
@@ -343,42 +369,49 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
   }
 
   // ---------- batch checklist ----------
-  function renderBatch() {
+  // the same batch list feeds two screens: the weigher ticks "done", the puller ticks "pulled"
+  var WEIGH = { box: "batchBox", empty: "batchEmpty", sel: "batchSel", meta: "batchMeta", bar: "batchBar", items: "batchItems", rm: "batchRemove", flag: "done", at: "doneAt", word: "weighed" };
+  var PULL = { box: "pBox", empty: "pEmpty", sel: "pSel", meta: "pMeta", bar: "pBar", items: "pItems", rm: "pRemove", flag: "pulled", at: "pulledAt", word: "pulled" };
+
+  function renderList(p) {
     var has = state.batches.length > 0;
-    $("batchBox").hidden = !has; $("batchEmpty").hidden = has;
+    $(p.box).hidden = !has; $(p.empty).hidden = has;
     if (!has) return;
     if (!curBatch()) state.currentBatch = state.batches[state.batches.length - 1].id;
-    var sel = $("batchSel"); sel.textContent = "";
+    var count = function (b) { return b.items.filter(function (i) { return i[p.flag]; }).length; };
+    var sel = $(p.sel); sel.textContent = "";
     state.batches.slice().reverse().forEach(function (b) {
-      var d = b.items.filter(function (i) { return i.done; }).length;
       var o = document.createElement("option"); o.value = b.id;
-      o.textContent = (b.lot ? "LOT/IM " + b.lot : "No lot") + " · " + (b.product || "Batch") + " (" + d + "/" + b.items.length + ")";
+      o.textContent = (b.lot ? "LOT/IM " + b.lot : "No lot") + " · " + (b.product || "Batch") + " (" + count(b) + "/" + b.items.length + ")";
       sel.appendChild(o);
     });
     sel.value = state.currentBatch;
-    var b = curBatch(), done = b.items.filter(function (i) { return i.done; }).length;
-    $("batchMeta").textContent = (b.product || "Batch") + (b.lot ? " · LOT/IM " + b.lot : "") + " · " + done + " of " + b.items.length + " weighed" + (done === b.items.length && done ? " · All done" : "");
-    $("batchBar").style.width = (b.items.length ? done / b.items.length * 100 : 0) + "%";
-    var box = $("batchItems"); box.textContent = "";
+    var b = curBatch(), done = count(b);
+    $(p.meta).textContent = (b.product || "Batch") + (b.lot ? " · LOT/IM " + b.lot : "") + " · " + done + " of " + b.items.length + " " + p.word + (done === b.items.length && done ? " · All done" : "");
+    $(p.bar).style.width = (b.items.length ? done / b.items.length * 100 : 0) + "%";
+    var box = $(p.items); box.textContent = "";
     b.items.forEach(function (it) {
-      var row = document.createElement("label"); row.className = "chk" + (it.done ? " done" : "");
-      var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!it.done;
-      cb.onchange = function () { it.done = cb.checked; it.doneAt = cb.checked ? Date.now() : null; save(); render(); };
+      var row = document.createElement("label"); row.className = "chk" + (it[p.flag] ? " done" : "");
+      var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!it[p.flag];
+      cb.onchange = function () { it[p.flag] = cb.checked; it[p.at] = cb.checked ? Date.now() : null; save(); render(); };
       var t = document.createElement("span"); t.className = "t";
       var nm = document.createElement("b"); nm.textContent = it.item;
       t.appendChild(nm); t.appendChild(document.createTextNode(" " + it.desc));
       var s = document.createElement("span"); s.className = "s";
-      s.textContent = fmtWeight(it.weight, it.unit) + (it.done && it.doneAt ? " · weighed " + clock(it.doneAt) : "");
+      s.textContent = fmtWeight(it.weight, it.unit) + (it[p.flag] && it[p.at] ? " · " + p.word + " " + clock(it[p.at]) : "");
       t.appendChild(s);
       row.appendChild(cb); row.appendChild(t); box.appendChild(row);
     });
-    armed($("batchRemove"), "Remove this batch", function () {
+    armed($(p.rm), "Remove this batch", function () {
       state.batches = state.batches.filter(function (x) { return x.id !== b.id; });
       state.currentBatch = null; save(); render();
     });
   }
+  function renderBatch() { renderList(WEIGH); renderList(PULL); }
 
-  $("batchSel").addEventListener("change", function () { state.currentBatch = $("batchSel").value; save(); fillIdentity(); render(); });
+  [WEIGH, PULL].forEach(function (p) {
+    $(p.sel).addEventListener("change", function () { state.currentBatch = $(p.sel).value; save(); fillIdentity(); render(); });
+  });
 
   // ---------- read an Excel pick report (.xlsx / .xlsm) ----------
   async function inflateRaw(bytes) {
@@ -456,11 +489,11 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
   }
   function signature(b) { return b.lot + "|" + b.product + "|" + b.items.map(function (i) { return i.item + ":" + i.weight; }).join(","); }
 
-  $("batchFile").addEventListener("change", async function (ev) {
+  async function loadPickReport(ev, msgId) {
     var f = ev.target.files[0]; ev.target.value = "";
     if (!f) return;
-    if (!/\.(xlsx|xlsm)$/i.test(f.name)) { say("batchMsg", "Use an .xlsx or .xlsm file. Older .xls files can be re-saved as .xlsx.", true); return; }
-    if (typeof DecompressionStream === "undefined") { say("batchMsg", "This browser is too old to read Excel files. Update iOS or Chrome.", true); return; }
+    if (!/\.(xlsx|xlsm)$/i.test(f.name)) { say(msgId, "Use an .xlsx or .xlsm file. Older .xls files can be re-saved as .xlsx.", true); return; }
+    if (typeof DecompressionStream === "undefined") { say(msgId, "This browser is too old to read Excel files. Update iOS or Chrome.", true); return; }
     try {
       var sheets = await readSheets(await f.arrayBuffer()), seen = {}, inFile = {}, added = [];
       state.batches.forEach(function (b) { seen[signature(b)] = 1; });
@@ -471,12 +504,14 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
           if (!seen[sg] && !inFile[lk]) { seen[sg] = 1; inFile[lk] = 1; added.push(b); }
         });
       });
-      if (!added.length) { say("batchMsg", "No ingredient rows found, or this batch is already loaded.", true); return; }
+      if (!added.length) { say(msgId, "No ingredient rows found, or this batch is already loaded.", true); return; }
       added.forEach(function (b) { state.batches.push(b); });
       state.currentBatch = added[0].id; save(); fillIdentity(); render();
-      say("batchMsg", "Loaded " + added.length + " batch" + (added.length > 1 ? "es" : "") + ", " + added.reduce(function (n, b) { return n + b.items.length; }, 0) + " ingredients.");
-    } catch (e) { say("batchMsg", "Could not read that file.", true); }
-  });
+      say(msgId, "Loaded " + added.length + " batch" + (added.length > 1 ? "es" : "") + ", " + added.reduce(function (n, b) { return n + b.items.length; }, 0) + " ingredients.");
+    } catch (e) { say(msgId, "Could not read that file.", true); }
+  }
+  $("batchFile").addEventListener("change", function (ev) { loadPickReport(ev, "batchMsg"); });
+  $("pFile").addEventListener("change", function (ev) { loadPickReport(ev, "pMsg"); });
 
   // ---------- material requests ----------
   function renderRequests() {
@@ -638,7 +673,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     var out = [];
     state.batches.forEach(function (b) {
       b.items.forEach(function (i) {
-        out.push([b.loaded || "", b.lot || "", b.product || "", i.item, i.desc, i.weight === null ? "" : i.weight, i.unit || "", i.done ? "Yes" : "No", i.doneAt ? dateOf(i.doneAt) + " " + clock24(i.doneAt) : ""]);
+        out.push([b.loaded || "", b.lot || "", b.product || "", i.item, i.desc, i.weight === null ? "" : i.weight, i.unit || "", i.done ? "Yes" : "No", i.doneAt ? dateOf(i.doneAt) + " " + clock24(i.doneAt) : "", i.pulled ? "Yes" : "No", i.pulledAt ? dateOf(i.pulledAt) + " " + clock24(i.pulledAt) : ""]);
       });
     });
     return out;
@@ -679,7 +714,7 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     if (!state.entries.length && !state.requests.length && !state.batches.length) { say("dataMsg", "Nothing to export yet.", true); return; }
     var sheets = [{ name: "Partials", head: HEAD, rows: exportRows(), pct: 8 }];
     if (state.requests.length) sheets.push({ name: "Material requests", head: ["Date", "Weigher", "LOT/IM number", "Batch name", "Item needed", "Requested at", "Received at", "Wait (min)", "Wait (m:ss)"], rows: requestRows(), pct: -1 });
-    if (state.batches.length) sheets.push({ name: "Batch items", head: ["Loaded", "LOT/IM number", "Batch name", "Item", "Description", "Weight", "Unit", "Weighed", "Weighed at"], rows: itemRows(), pct: -1 });
+    if (state.batches.length) sheets.push({ name: "Batch items", head: ["Loaded", "LOT/IM number", "Batch name", "Item", "Description", "Weight", "Unit", "Weighed", "Weighed at", "Pulled", "Pulled at"], rows: itemRows(), pct: -1 });
     deliver(buildXlsx(sheets), "partials-" + today() + ".xlsx", "Excel file ready.");
   });
 
@@ -704,6 +739,17 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     navigator.serviceWorker.register("sw.js").catch(function () {});
   }
+
+  var ROLE_KEY = "partialsTracker.role";
+  function setRole(r) {
+    document.body.setAttribute("data-role", r);
+    $("roleW").setAttribute("aria-pressed", r === "weigher"); $("roleP").setAttribute("aria-pressed", r === "puller");
+    try { localStorage.setItem(ROLE_KEY, r); } catch (e) {}
+  }
+  $("roleW").addEventListener("click", function () { setRole("weigher"); });
+  $("roleP").addEventListener("click", function () { setRole("puller"); });
+  var savedRole = "weigher"; try { savedRole = localStorage.getItem(ROLE_KEY) === "puller" ? "puller" : "weigher"; } catch (e) {}
+  setRole(savedRole);
 
   $("reqName").value = $("name").value = state.lastName;
   render();
