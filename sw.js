@@ -1,6 +1,7 @@
 // Caches the app so it opens with no signal. Online it always tries the network first, so updates arrive on the next open.
-var CACHE = "partials-v2";
-var FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
+// Only this site's own files and the Firebase scripts are handled here; live database traffic is left alone.
+var CACHE = "partials-v3";
+var FILES = ["./", "./index.html", "./firebase-config.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
@@ -11,7 +12,9 @@ self.addEventListener("activate", function (e) {
   }).then(function () { return self.clients.claim(); }));
 });
 self.addEventListener("fetch", function (e) {
+  var url = new URL(e.request.url);
   if (e.request.method !== "GET") return;
+  if (url.origin !== location.origin && url.hostname !== "www.gstatic.com") return;
   e.respondWith(fetch(e.request).then(function (res) {
     var copy = res.clone();
     caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
