@@ -133,6 +133,35 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
     <p class="note" id="targetNote"></p>
   </section>
 
+  <section class="card" aria-labelledby="entH">
+    <h2 id="entH">Log a shift</h2>
+    <form id="entry" autocomplete="off">
+      <div class="grid">
+        <label class="full">Weigher name
+          <input type="text" id="name" list="names" required placeholder="Name" autocapitalize="words">
+          <datalist id="names"></datalist>
+        </label>
+        <label>Shift
+          <select id="shift"><option>Day</option><option>Evening</option><option>Night</option></select>
+        </label>
+        <label>Partials weighed
+          <input type="number" id="done" inputmode="numeric" min="0" step="1" required>
+        </label>
+        <label>LOT/IM number
+          <input type="text" id="lot" placeholder="LOT/IM number" autocapitalize="characters">
+        </label>
+        <label>Batch name
+          <input type="text" id="batchName" placeholder="Batch name">
+        </label>
+        <label class="full">Partials in the batch
+          <input type="number" id="book" inputmode="numeric" min="0" step="1" placeholder="Total the batch consists of">
+        </label>
+        <div class="full"><button type="submit" style="width:100%">Save entry</button></div>
+      </div>
+      <p class="msg" id="msg" role="status"></p>
+    </form>
+  </section>
+
   <section class="card" aria-labelledby="batH">
     <h2 id="batH">Items To Weigh</h2>
     <div class="stack">
@@ -174,35 +203,6 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
       </div>
       <div class="rows" id="reqDone"></div>
     </div>
-  </section>
-
-  <section class="card" aria-labelledby="entH">
-    <h2 id="entH">Log a shift</h2>
-    <form id="entry" autocomplete="off">
-      <div class="grid">
-        <label class="full">Weigher name
-          <input type="text" id="name" list="names" required placeholder="Name" autocapitalize="words">
-          <datalist id="names"></datalist>
-        </label>
-        <label>Shift
-          <select id="shift"><option>Day</option><option>Evening</option><option>Night</option></select>
-        </label>
-        <label>Partials weighed
-          <input type="number" id="done" inputmode="numeric" min="0" step="1" required>
-        </label>
-        <label>LOT/IM number
-          <input type="text" id="lot" placeholder="LOT/IM number" autocapitalize="characters">
-        </label>
-        <label>Batch name
-          <input type="text" id="batchName" placeholder="Batch name">
-        </label>
-        <label class="full">Partials in the batch
-          <input type="number" id="book" inputmode="numeric" min="0" step="1" placeholder="Total the batch consists of">
-        </label>
-        <div class="full"><button type="submit" style="width:100%">Save entry</button></div>
-      </div>
-      <p class="msg" id="msg" role="status"></p>
-    </form>
   </section>
 
   <section class="card" aria-labelledby="sumH">
