@@ -7,6 +7,7 @@ Track partials weighed per shift against a daily target, with a weigher view and
 - **Log a shift:** weigher name, shift, partials weighed, LOT/IM number, batch name, partials in the batch. Completion % = partials weighed / that day's target.
 - **Items To Weigh:** load a pick report (.xlsx or .xlsm) and tick each ingredient off as it is weighed. The time of each tick is saved.
 - **Material requests:** tap **Partials requested** when out of material. A timer runs until the puller taps Delivered. The weigher cannot stop the timer.
+- **Shift Handoff:** notes for the next shift. Submitting emails them to the supervisors (with the weigher, shift, partials weighed against target, and items still to weigh). The draft is kept if the app closes. If the email fails, the handoff stays saved with a **Send again** button.
 - **Day summary, entries, Export to Excel / CSV, Copy backup / Restore.**
 
 ## Puller view
@@ -28,9 +29,20 @@ Track partials weighed per shift against a daily target, with a weigher view and
 
 While `firebase-config.js` has `window.FIREBASE_CONFIG = null`, everything works except material requests.
 
+## Shift Handoff email setup (Google Apps Script, free)
+Handoffs are sent by a small Google Apps Script that runs under the mailbox you choose. Supervisor addresses live inside that script, never in this repo. The script allows at most 20 emails an hour.
+1. Sign in to script.google.com as the sending Gmail account and create a new project.
+2. Paste in `handoff-mailer.gs` and replace the example addresses in `TO` with the supervisors.
+3. Deploy > New deployment > Web app. Execute as: Me. Who has access: Anyone. Authorize when asked.
+4. Copy the web app URL into `scriptUrl` in `handoff-config.js` and push.
+
+While `scriptUrl` is empty, handoffs are saved on the phone but not emailed. After editing the script, redeploy with a new version for the change to apply.
+
 ## Files
 - `index.html`: the whole app
 - `firebase-config.js`: Firebase web config
+- `handoff-config.js`: web app URL of the handoff mailer
+- `handoff-mailer.gs`: the Google Apps Script that sends the email (placeholder addresses only)
 - `firestore.rules`: security rules to paste into Firestore
 - `manifest.webmanifest`, `sw.js`, `icon-*.png`: home-screen install and offline cache
 

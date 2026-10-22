@@ -101,6 +101,7 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
 .filebtn input { position: absolute; inset: 0; opacity: 0; width: 100%; min-height: 0; cursor: pointer; }
 .filebtn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
 .stack { display: grid; gap: 10px; }
+textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; resize: vertical; }
 .chk {
   display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center;
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font-size: 16px; cursor: pointer;
@@ -121,6 +122,7 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
+<script src="handoff-config.js"></script>
 </head>
 <body data-role="weigher" data-unlocked="0">
 <main>
@@ -277,6 +279,30 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
     <div class="rows" id="rows"></div>
   </section>
 
+  <section class="card w-only" aria-labelledby="hoH">
+    <h2 id="hoH">Shift Handoff</h2>
+    <form id="handoff" class="stack" autocomplete="off">
+      <div class="grid">
+        <label>Weigher name
+          <input type="text" id="hoName" list="names" placeholder="Name" autocapitalize="words">
+        </label>
+        <label>Shift
+          <select id="hoShift"><option>Day</option><option>Evening</option><option>Night</option></select>
+        </label>
+        <label class="full">Handoff notes
+          <textarea id="hoNotes" rows="6" placeholder="For the next shift: what is done, what is left, problems, equipment or material issues."></textarea>
+        </label>
+        <label class="full" style="grid-auto-flow:column;justify-content:start;align-items:center;gap:10px;font-size:15px;color:var(--ink)">
+          <input type="checkbox" id="hoItems" checked style="width:22px;min-height:22px;height:22px;padding:0"> Include the items still to weigh
+        </label>
+        <div class="full"><button type="submit" style="width:100%">Submit handoff</button></div>
+      </div>
+      <p class="msg" id="hoMsg" role="status"></p>
+      <div class="rows" id="hoList"></div>
+      <div class="empty" id="hoEmpty">No handoffs submitted yet. Submitting emails the notes to the supervisors.</div>
+    </form>
+  </section>
+
   <section class="card d-card">
     <h2>Data</h2>
     <div class="actions">
@@ -303,7 +329,7 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
 
   function normalize(s) {
     s.batches = s.batches || []; s.requests = s.requests || [];
-    s.currentBatch = s.currentBatch || null; s.lastName = s.lastName || "";
+    s.currentBatch = s.currentBatch || null; s.lastName = s.lastName || ""; s.handoffs = s.handoffs || []; s.handoffDraft = s.handoffDraft || "";
     return s;
   }
   function load() {
@@ -369,7 +395,7 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
     var dl = $("names"); dl.textContent = "";
     Object.keys(names).sort().forEach(function (n) { var o = document.createElement("option"); o.value = n; dl.appendChild(o); });
 
-    renderBatch(); renderRequests();
+    renderBatch(); renderRequests(); renderHandoff();
   }
 
   // ---------- helpers ----------
@@ -680,6 +706,77 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
     Array.prototype.forEach.call(document.querySelectorAll("[data-since]"), function (el) { el.textContent = dur(Date.now() - Number(el.dataset.since)); });
   }, 1000);
 
+  // ---------- shift handoff (emailed to the supervisors through EmailJS) ----------
+  // Supervisor addresses live in the EmailJS template, not in this app or the repo.
+  var sendingHandoff = {};
+  function handoffMessage(h) {
+    var lines = ["Shift Handoff", "Weigher: " + h.name, "Shift: " + h.shift, "Submitted: " + h.date + " " + clock(h.at)];
+    if (h.lot || h.batchName) lines.push("LOT/IM: " + (h.lot || "-") + (h.batchName ? "   Batch: " + h.batchName : ""));
+    if (h.weighed != null) lines.push("Partials weighed today: " + h.weighed.toLocaleString() + (h.target ? " of " + h.target.toLocaleString() + " (" + Math.round(h.weighed / h.target * 100) + "%)" : ""));
+    if (h.remaining && h.remaining.length) {
+      lines.push("", "Still to weigh (" + h.remaining.length + "):");
+      h.remaining.forEach(function (x) { lines.push("- " + x); });
+    }
+    lines.push("", "Notes:", h.notes);
+    return lines.join("\n");
+  }
+  function sendHandoff(h) {
+    var c = window.HANDOFF_CONFIG;
+    if (!c || !c.scriptUrl) return Promise.reject(new Error("not set up"));
+    // text/plain keeps this a simple request, which a Google Apps Script web app accepts from a browser
+    return fetch(c.scriptUrl, {
+      method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ subject: "Shift Handoff: " + h.shift + " shift, " + h.name + ", " + h.date, message: handoffMessage(h) })
+    }).then(function (res) { return res.json(); })
+      .then(function (j) { if (!j || !j.ok) throw new Error("send failed"); });
+  }
+  function deliverHandoff(h, after) {
+    if (sendingHandoff[h.id]) return;
+    sendingHandoff[h.id] = true; renderHandoff();
+    sendHandoff(h).then(function () {
+      h.sent = true; h.sentAt = Date.now(); save(); say("hoMsg", "Handoff emailed to the supervisors.");
+    }).catch(function (e) {
+      say("hoMsg", e && e.message === "not set up" ? "Saved, but email is not set up yet. Tap Send again once it is." : "Saved, but the email did not go out. Check your signal and tap Send again.", true);
+    }).then(function () { delete sendingHandoff[h.id]; renderHandoff(); if (after) after(); });
+  }
+  function renderHandoff() {
+    var box = $("hoList"); box.textContent = "";
+    state.handoffs.slice().reverse().slice(0, 8).forEach(function (h) {
+      var row = document.createElement("div"); row.className = "row";
+      var left = document.createElement("div");
+      var n = document.createElement("div"); n.className = "name"; n.textContent = h.name + " · " + h.shift;
+      var s = document.createElement("div"); s.className = "sub"; s.textContent = h.date + " " + clock(h.at) + " · " + (h.notes.length > 80 ? h.notes.slice(0, 80) + "..." : h.notes);
+      left.appendChild(n); left.appendChild(s);
+      var right = document.createElement("div");
+      if (h.sent) { right.className = "pct good"; right.textContent = "Sent"; }
+      else {
+        var b = document.createElement("button"); b.type = "button"; b.className = "small"; b.disabled = !!sendingHandoff[h.id];
+        b.textContent = sendingHandoff[h.id] ? "Sending..." : "Send again";
+        b.onclick = function () { deliverHandoff(h); };
+        right.appendChild(b);
+      }
+      row.appendChild(left); row.appendChild(right); box.appendChild(row);
+    });
+    $("hoEmpty").hidden = state.handoffs.length > 0;
+  }
+  $("hoNotes").addEventListener("input", function () { state.handoffDraft = $("hoNotes").value; save(); });
+  $("handoff").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var name = $("hoName").value.trim(), notes = $("hoNotes").value.trim();
+    if (!name) { say("hoMsg", "Enter your name.", true); return; }
+    if (!notes) { say("hoMsg", "Write your handoff notes first.", true); return; }
+    var day = today(), b = curBatch(), mine = state.entries.filter(function (e) { return e.date === day && e.name.toLowerCase() === name.toLowerCase(); });
+    var h = {
+      id: uid(), at: Date.now(), date: day, name: name, shift: $("hoShift").value,
+      lot: b ? b.lot : "", batchName: b ? b.product : "",
+      weighed: mine.length ? mine.reduce(function (a, e) { return a + e.done; }, 0) : null, target: targetFor(day).value,
+      remaining: $("hoItems").checked && b ? b.items.filter(function (i) { return !i.done; }).map(function (i) { return i.item + " " + i.desc; }) : [],
+      notes: notes, sent: false, sentAt: null
+    };
+    state.handoffs.push(h); state.lastName = name; state.handoffDraft = ""; $("hoNotes").value = ""; save();
+    deliverHandoff(h);
+  });
+
   var root = document.documentElement, THEME_KEY = "partialsTracker.theme";
   function isDark() {
     var t = root.getAttribute("data-theme");
@@ -816,10 +913,11 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
   }
 
   $("xlsx").addEventListener("click", function () {
-    if (!state.entries.length && !cloud.length && !state.batches.length) { say("dataMsg", "Nothing to export yet.", true); return; }
+    if (!state.entries.length && !cloud.length && !state.batches.length && !state.handoffs.length) { say("dataMsg", "Nothing to export yet.", true); return; }
     var sheets = [{ name: "Partials", head: HEAD, rows: exportRows(), pct: 8 }];
     if (cloud.length) sheets.push({ name: "Material requests", head: ["Date", "Weigher", "LOT/IM number", "Batch name", "Item needed", "Requested at", "Delivered at", "Wait (min)", "Wait (m:ss)", "Delivered by", "Status"], rows: requestRows(), pct: -1 });
     if (state.batches.length) sheets.push({ name: "Batch items", head: ["Loaded", "LOT/IM number", "Batch name", "Item", "Description", "Weight", "Unit", "Weighed", "Weighed at", "Pulled", "Pulled at"], rows: itemRows(), pct: -1 });
+    if (state.handoffs.length) sheets.push({ name: "Shift handoffs", head: ["Date", "Time", "Weigher", "Shift", "LOT/IM number", "Batch name", "Partials weighed", "Target", "Items still to weigh", "Notes", "Emailed"], rows: state.handoffs.map(function (h) { return [h.date, clock24(h.at), h.name, h.shift, h.lot || "", h.batchName || "", h.weighed === null ? "" : h.weighed, h.target || "", h.remaining.length, h.notes, h.sent ? "Yes" : "No"]; }), pct: -1 });
     deliver(buildXlsx(sheets), "partials-" + today() + ".xlsx", "Excel file ready.");
   });
 
@@ -856,6 +954,7 @@ body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="pulle
   var savedRole = "weigher"; try { savedRole = localStorage.getItem(ROLE_KEY) === "puller" ? "puller" : "weigher"; } catch (e) {}
   setRole(savedRole);
 
+  $("hoName").value = state.lastName; $("hoNotes").value = state.handoffDraft;
   applyLock(); startCloud();
   $("reqName").value = $("name").value = state.lastName;
   render();
