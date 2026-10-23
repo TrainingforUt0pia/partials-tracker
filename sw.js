@@ -1,6 +1,6 @@
 // Caches the app so it opens with no signal. Online it always tries the network first, so updates arrive on the next open.
 // Only this site's own files and the Firebase scripts are handled here; live database traffic is left alone.
-var CACHE = "partials-v4";
+var CACHE = "partials-v5";
 var FILES = ["./", "./index.html", "./firebase-config.js", "./handoff-config.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", function (e) {

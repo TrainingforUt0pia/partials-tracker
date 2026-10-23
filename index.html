@@ -723,10 +723,13 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   function sendHandoff(h) {
     var c = window.HANDOFF_CONFIG;
     if (!c || !c.scriptUrl) return Promise.reject(new Error("not set up"));
+    // the mailer refuses links and email addresses, so strip them here and real handoffs never trip it
+    var LINKS = /(https?:\/\/|ftp:\/\/|mailto:|www\.)\S*|[\w.+-]+@[\w-]+\.[a-z]{2,}|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|co|us|ly|me|xyz|ru|info|biz|app|dev|link|site|online|top|click|cc|tk)\b\S*/gi;
+    var clean = function (t) { return t.replace(LINKS, "[link removed]"); };
     // text/plain keeps this a simple request, which a Google Apps Script web app accepts from a browser
     return fetch(c.scriptUrl, {
       method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ subject: "Shift Handoff: " + h.shift + " shift, " + h.name + ", " + h.date, message: handoffMessage(h) })
+      body: JSON.stringify({ subject: clean("Shift Handoff: " + h.shift + " shift, " + h.name + ", " + h.date), message: clean(handoffMessage(h)) })
     }).then(function (res) { return res.json(); })
       .then(function (j) { if (!j || !j.ok) throw new Error("send failed"); });
   }
