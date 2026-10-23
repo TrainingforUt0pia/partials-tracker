@@ -30,7 +30,7 @@ Track partials weighed per shift against a daily target, with a weigher view and
 While `firebase-config.js` has `window.FIREBASE_CONFIG = null`, everything works except material requests.
 
 ## Shift Handoff email setup (Google Apps Script, free)
-Handoffs are sent by a small Google Apps Script that runs under the mailbox you choose. Supervisor addresses live inside that script, never in this repo. The script allows at most 20 emails an hour.
+Handoffs are sent by a small Google Apps Script that runs under the mailbox you choose. Supervisor addresses live inside that script, never in this repo. The script only accepts the app's handoff format, refuses links and email addresses (the app strips them first), and allows at most 10 emails an hour and 40 a day. Every email ends with a footer telling supervisors what a real handoff looks like.
 1. Sign in to script.google.com as the sending Gmail account and create a new project.
 2. Paste in `handoff-mailer.gs` and replace the example addresses in `TO` with the supervisors.
 3. Deploy > New deployment > Web app. Execute as: Me. Who has access: Anyone. Authorize when asked.
