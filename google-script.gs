@@ -406,7 +406,7 @@ function addRequest(d, s) {
   st.hourCount++;
   props.setProperty("reqrate", JSON.stringify(st));
   var id = Utilities.getUuid().replace(/-/g, "").slice(0, 12);
-  sh.appendRow([id, new Date(now), s.id, s.name, clean(d.item, 160), "open", "", "", "", "", validDevice(d.device) ? d.device : ""]);
+  sh.appendRow([id, new Date(now), s.id, s.name, clean(d.item, 500), "open", "", "", "", "", validDevice(d.device) ? d.device : ""]);
   return { ok: true, id: id, at: now };
 }
 

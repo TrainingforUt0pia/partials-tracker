@@ -62,3 +62,5 @@ Do not commit real batch, product or lot data to this public repo. Test with mad
 
 ## Install on a phone
 Open the site in Safari (iPhone) or Chrome (Android), then Share > Add to Home Screen (iPhone) or Install app (Android).
+
+- 2026-10-27: Material requests now use a free-text 'Materials requested' box (500 characters, required) instead of the item dropdown; the puller sees the text and gets a beep, vibration and message when a new request arrives while the app is open (a flashing tab title if it is in the background). Script limit raised to 500 (redeploy needed). Cache v10. Not pushed.

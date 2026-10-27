@@ -301,13 +301,14 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   <section class="card w-only" aria-labelledby="reqH">
     <h2 id="reqH">Material requests</h2>
     <div class="stack">
-      <div class="grid">
+      <div class="stack">
         <label>Weigher name
           <input type="text" id="reqName" readonly>
         </label>
-        <label>What do you need?
-          <select id="reqItem"></select>
+        <label>Materials requested
+          <textarea id="reqItem" rows="3" maxlength="500" placeholder="What the puller should bring (item numbers, amounts, where)."></textarea>
         </label>
+        <p class="note" id="reqCount">0 / 500</p>
       </div>
       <button class="bigbtn" id="reqBtn" type="button">Partials requested</button>
       <p class="msg" id="reqMsg" role="status"></p>
@@ -658,10 +659,38 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       renderRequests();
     }).catch(function (e) { syncErr = netMsg(e); renderRequests(); });
   }
+  var seenReq = null, audioCtx = null, titleBase = document.title, flash = null;
+  document.addEventListener("click", function () { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === "suspended") audioCtx.resume(); } catch (e) {} }, { once: true });
+  function beep() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      [0, 0.3, 0.6].forEach(function (t) {
+        var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+        g.gain.setValueAtTime(0.25, audioCtx.currentTime + t); g.gain.setValueAtTime(0, audioCtx.currentTime + t + 0.18);
+        o.start(audioCtx.currentTime + t); o.stop(audioCtx.currentTime + t + 0.2);
+      });
+    } catch (e) {}
+  }
+  function alertNew(list) {
+    var ids = list.map(function (r) { return r.id; });
+    var fresh = seenReq ? list.filter(function (r) { return seenReq.indexOf(r.id) < 0; }) : [];
+    seenReq = ids;
+    if (!fresh.length) return;
+    beep();
+    try { if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]); } catch (e) {}
+    say("pullMsg", "New request from " + fresh[0].name + (fresh.length > 1 ? " and " + (fresh.length - 1) + " more" : "") + ".");
+    if (document.hidden) {
+      clearInterval(flash); var on = false;
+      flash = setInterval(function () { on = !on; document.title = on ? "NEW REQUEST" : titleBase; }, 1000);
+      document.addEventListener("visibilitychange", function once() { if (!document.hidden) { clearInterval(flash); document.title = titleBase; document.removeEventListener("visibilitychange", once); } });
+    }
+  }
   function refreshOpen() {
     if (!session || ["puller", "supervisor"].indexOf(session.role) < 0) return Promise.resolve();
     return api({ action: "open" }).then(function (j) {
-      if (j && j.ok) { openReqs = j.open; pullToday = j.today; syncErr = ""; }
+      if (j && j.ok) { alertNew(j.open); openReqs = j.open; pullToday = j.today; syncErr = ""; }
       else if (j && (j.error === "auth" || j.error === "ack")) { return; }
       else syncErr = "Could not load the waiting requests.";
       renderRequests();
@@ -682,13 +711,6 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   }
 
   function renderRequests() {
-    var b = curBatch(), sel = $("reqItem"), keep = sel.value;
-    sel.textContent = "";
-    var o0 = document.createElement("option"); o0.value = ""; o0.textContent = "Any / next ingredient"; sel.appendChild(o0);
-    if (b) b.items.filter(function (i) { return !i.done; }).forEach(function (i) {
-      var o = document.createElement("option"); o.value = i.id; o.textContent = i.item + " " + i.desc; sel.appendChild(o);
-    });
-    sel.value = keep;
     $("reqNote").textContent = syncErr;
     $("reqBtn").disabled = !configured();
 
@@ -741,8 +763,9 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       var row = document.createElement("div"); row.className = "row pending";
       var left = document.createElement("div");
       var n = document.createElement("div"); n.className = "name"; n.textContent = r.name + " needs material";
-      var s = document.createElement("div"); s.className = "sub"; s.textContent = "Asked at " + clock(r.at) + (r.item ? " · " + r.item : "");
-      left.appendChild(n); left.appendChild(s);
+      var s = document.createElement("div"); s.className = "sub"; s.textContent = "Asked at " + clock(r.at);
+      var what = document.createElement("div"); what.textContent = r.item || "(nothing written)"; what.style.cssText = "margin-top:4px;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere";
+      left.appendChild(n); left.appendChild(s); left.appendChild(what);
       var w = document.createElement("div"); w.className = "wait"; w.dataset.since = r.at; w.textContent = dur(srv() - r.at);
       var got = document.createElement("button"); got.type = "button"; got.className = "big"; got.textContent = "Delivered";
       armed(got, "Delivered", function () {
@@ -762,17 +785,19 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     var name = $("reqName").value.trim(), btn = $("reqBtn");
     if (!name) { say("reqMsg", "Enter your name first.", true); $("reqName").focus(); return; }
     if (cloud.some(function (r) { return r.status === "open"; })) { say("reqMsg", "You already have a request waiting for the puller.", true); return; }
-    var b = curBatch(), id = $("reqItem").value, it = b && b.items.filter(function (i) { return i.id === id; })[0];
+    var what = $("reqItem").value.replace(/\s+/g, " ").trim().slice(0, 500);
+    if (!what) { say("reqMsg", "Write what you need the puller to bring.", true); $("reqItem").focus(); return; }
     state.lastName = name; if (!$("name").value) $("name").value = name; save();
     btn.disabled = true; btn.textContent = "Sending...";
-    api({ action: "request", device: DEVICE, name: name, item: it ? it.item + " " + it.desc : "" }).then(function (j) {
-      if (j && j.ok) { say("reqMsg", "Request sent to the puller. Timer started."); $("reqItem").value = ""; return refreshMine(); }
+    api({ action: "request", device: DEVICE, name: name, item: what }).then(function (j) {
+      if (j && j.ok) { say("reqMsg", "Request sent to the puller. Timer started."); $("reqItem").value = ""; $("reqCount").textContent = "0 / 500"; return refreshMine(); }
       var errs = { open: "You already have a request waiting for the puller.", limit: "Too many requests right now. Try again in a few minutes.", invalid: "Enter your name first." };
       say("reqMsg", errs[j && j.error] || "The request was not accepted. Try again.", true);
     }).catch(function (e) {
       say("reqMsg", e && e.message === "not set up" ? "Request tracking is not switched on yet." : "No signal. The puller has NOT received your request.", true);
     }).then(function () { btn.textContent = "Partials requested"; btn.disabled = !configured(); });
   });
+  $("reqItem").addEventListener("input", function () { $("reqCount").textContent = $("reqItem").value.length + " / 500"; });
   $("reqName").addEventListener("change", function () { state.lastName = $("reqName").value.trim(); save(); });
 
 
