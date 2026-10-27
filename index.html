@@ -88,10 +88,26 @@ button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button { min-height: 34px; padding: 4px 12px; font-size: 13px; background: transparent; color: var(--ink); border-radius: 0; }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-body[data-role="puller"] .w-only { display: none !important; }
-body[data-role="weigher"] .p-only, body[data-role="weigher"] .p-lock { display: none !important; }
-body[data-role="puller"][data-unlocked="1"] .p-lock { display: none !important; }
-body[data-role="puller"]:not([data-unlocked="1"]) .p-only, body[data-role="puller"]:not([data-unlocked="1"]) .d-card { display: none !important; }
+body[data-auth="out"] main { display: none !important; }
+body[data-role="weigher"] .p-only, body[data-role="weigher"] .a-only { display: none !important; }
+body[data-role="puller"] .w-only, body[data-role="puller"] .a-only { display: none !important; }
+body[data-role="admin"] .w-only, body[data-role="admin"] .p-only, body[data-role="admin"] .d-card { display: none !important; }
+.who { font-size: 13px; color: var(--muted); }
+.home { position: fixed; inset: 0; z-index: 50; background: var(--bg); overflow-y: auto; display: grid; place-items: start center; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.home-card { width: min(560px, 100%); display: grid; gap: 14px; padding: 8px 0; }
+.kpi { width: 180px; height: auto; margin: 10px auto 0; animation: pop .7s ease both; }
+.home-title { text-align: center; font-size: 22px; margin: 0; letter-spacing: .2px; }
+.home-sub { margin: 0; color: var(--muted); }
+.letter { max-height: 44vh; overflow-y: auto; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-size: 15px; line-height: 1.5; }
+.letter h3 { margin: 14px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.letter h3:first-child { margin-top: 0; }
+.letter p { margin: 0; }
+#ackFields.locked { opacity: .45; pointer-events: none; }
+.sig { width: 100%; aspect-ratio: 10 / 3; background: #fff; border: 1px solid var(--line); border-radius: 8px; touch-action: none; display: block; }
+.tickrow { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; color: var(--ink); font-size: 15px; }
+.tickrow input { width: 24px; height: 24px; min-height: 0; padding: 0; }
+@keyframes pop { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .kpi { animation: none; } }
 .row.pending .big { grid-column: 1 / -1; width: 100%; min-height: 56px; font-size: 18px; }
 .filebtn {
   display: inline-flex; align-items: center; justify-content: center; position: relative;
@@ -118,37 +134,85 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
 .row.pending .btns button { flex: 1; }
 @media (max-width: 420px) { .stats { grid-template-columns: 1fr 1fr; } }
 </style>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-<script src="firebase-config.js"></script>
 <script src="handoff-config.js"></script>
 </head>
-<body data-role="weigher" data-unlocked="0">
+<body data-role="weigher" data-auth="out">
+<div id="home" class="home">
+  <div class="home-card">
+    <svg class="kpi" viewBox="0 0 240 96" role="img" aria-label="KPI"><rect x="6" y="8" width="228" height="80" rx="12" fill="var(--accent)"/><text x="120" y="68" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif" font-size="58" font-weight="800" letter-spacing="9" style="fill:var(--accent-ink)">KPI</text></svg>
+    <h1 class="home-title">Partials Tracker</h1>
+    <form id="signin" class="stack" autocomplete="off">
+      <p class="home-sub">Sign in with your ID and PIN.</p>
+      <label>ID
+        <input type="text" id="siId" autocapitalize="characters" autocomplete="username" required>
+      </label>
+      <label>PIN
+        <input type="password" id="siPin" inputmode="numeric" autocomplete="off" required>
+      </label>
+      <button type="submit" id="siBtn">Sign in</button>
+      <p class="msg" id="siMsg" role="status"></p>
+      <p class="note">Your supervisor gives you your ID and PIN. Your PIN is your signature, so do not share it.</p>
+    </form>
+    <form id="ackForm" class="stack" hidden autocomplete="off">
+      <h2 id="letterTitle"></h2>
+      <p class="note" id="ackSignedAs"></p>
+      <p class="note">Read the whole letter. The boxes below unlock when you reach the end.</p>
+      <div class="letter" id="letter" tabindex="0"></div>
+      <div id="ackFields" class="stack locked">
+        <div class="tickrow"><input type="checkbox" id="ackCheck"><label for="ackCheck" style="color:var(--ink);font-size:15px" id="letterStatement"></label></div>
+        <label>Type your full name
+          <input type="text" id="ackName" autocomplete="off" autocapitalize="words">
+        </label>
+        <label>Sign here with your finger or mouse
+          <canvas id="sigPad" class="sig" width="800" height="240"></canvas>
+        </label>
+        <div class="actions"><button type="button" class="ghost small" id="sigClear">Clear signature</button></div>
+        <button type="submit" id="ackSubmit" disabled>Sign and continue</button>
+        <p class="msg" id="ackMsg" role="status"></p>
+      </div>
+      <button type="button" class="ghost small" id="ackCancel">Cancel and sign out</button>
+    </form>
+  </div>
+</div>
 <main>
   <header>
-    <h1>Partials Tracker</h1>
+    <h1 id="pageTitle">Weigher</h1>
     <div class="head-right">
-      <div class="seg" role="group" aria-label="Who is using this phone"><button type="button" id="roleW" aria-pressed="true">Weigher</button><button type="button" id="roleP" aria-pressed="false">Puller</button></div>
+      <span class="who" id="who"></span>
+      <div class="seg" id="roleSeg" role="group" aria-label="View" hidden><button type="button" id="roleA" aria-pressed="false">Admin</button><button type="button" id="roleW" aria-pressed="true">Weigher</button><button type="button" id="roleP" aria-pressed="false">Puller</button></div>
       <button class="ghost small" id="themeBtn" type="button" aria-label="Switch between light and dark theme">Dark mode</button>
       <label class="w-only" style="grid-auto-flow:column;align-items:center;gap:8px">Date
         <input type="date" id="viewDate" style="width:auto">
       </label>
+      <button class="ghost small" id="signOut" type="button">Sign out</button>
     </div>
   </header>
 
-  <section class="card p-lock" aria-labelledby="unlockH">
-    <h2 id="unlockH">Puller sign-in</h2>
-    <form id="unlockForm" class="stack" autocomplete="off">
-      <label>Your name
-        <input type="text" id="pullName" placeholder="Name" autocapitalize="words" required>
-      </label>
-      <label>Puller PIN
-        <input type="password" id="pullPin" inputmode="numeric" autocomplete="off" required>
-      </label>
-      <button type="submit">Unlock puller view</button>
-      <p class="msg" id="unlockMsg" role="status"></p>
-    </form>
+  <section class="card a-only" aria-labelledby="admH">
+    <h2 id="admH">People and PINs</h2>
+    <div class="stack">
+      <div id="newPinBox" class="row pending" hidden></div>
+      <form id="addPerson" class="grid" autocomplete="off">
+        <label>ID (badge or employee number)
+          <input type="text" id="apId" autocapitalize="characters" required>
+        </label>
+        <label>Full name
+          <input type="text" id="apName" autocapitalize="words" required>
+        </label>
+        <label>Role
+          <select id="apRole"><option value="weigher">Weigher</option><option value="puller">Puller</option><option value="supervisor">Supervisor</option></select>
+        </label>
+        <div style="align-self:end"><button type="submit" style="width:100%">Add person and create PIN</button></div>
+      </form>
+      <p class="msg" id="admMsg" role="status"></p>
+      <div class="rows" id="people"></div>
+      <p class="note" id="letterNote"></p>
+    </div>
+  </section>
+
+  <section class="card a-only" aria-labelledby="sgH">
+    <h2 id="sgH">Recent sign-ins</h2>
+    <div class="rows" id="signins"></div>
   </section>
 
   <section class="card p-only" aria-labelledby="waitH">
@@ -157,7 +221,6 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       <div class="sub" id="pullWho" style="font-size:13px;color:var(--muted)"></div>
       <p class="msg" id="pullMsg" role="status"></p>
       <div class="rows" id="pullWait"></div>
-      <button class="ghost small" id="lockBtn" type="button">Lock puller view</button>
     </div>
   </section>
 
@@ -206,12 +269,6 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
         <label>Partials weighed
           <input type="number" id="done" inputmode="numeric" min="0" step="1" required>
         </label>
-        <label>LOT/IM number
-          <input type="text" id="lot" placeholder="LOT/IM number" autocapitalize="characters">
-        </label>
-        <label>Batch name
-          <input type="text" id="batchName" placeholder="Batch name">
-        </label>
         <label class="full">Partials in the batch
           <input type="number" id="book" inputmode="numeric" min="0" step="1" placeholder="Total the batch consists of">
         </label>
@@ -246,7 +303,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     <div class="stack">
       <div class="grid">
         <label>Weigher name
-          <input type="text" id="reqName" list="names" placeholder="Name" autocapitalize="words">
+          <input type="text" id="reqName" readonly>
         </label>
         <label>What do you need?
           <select id="reqItem"></select>
@@ -284,7 +341,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     <form id="handoff" class="stack" autocomplete="off">
       <div class="grid">
         <label>Weigher name
-          <input type="text" id="hoName" list="names" placeholder="Name" autocapitalize="words">
+          <input type="text" id="hoName" readonly>
         </label>
         <label>Shift
           <select id="hoShift"><option>Day</option><option>Evening</option><option>Night</option></select>
@@ -317,7 +374,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       </label>
       <button class="small" id="restoreGo" type="button">Restore</button>
     </div>
-    <p class="note">Saved on this device only. Use Export or Copy backup to move data to another phone or computer.</p>
+    <p class="note">Kept on this phone only until you sign out, then erased. The pick report is kept in memory only and is gone when you sign out or close the app. Export to Excel first if you need a copy.</p>
     <p class="msg" id="dataMsg" role="status"></p>
   </section>
 </main>
@@ -328,15 +385,20 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   var state = load();
 
   function normalize(s) {
-    s.batches = s.batches || []; s.requests = s.requests || [];
-    s.currentBatch = s.currentBatch || null; s.lastName = s.lastName || ""; s.handoffs = s.handoffs || []; s.handoffDraft = s.handoffDraft || "";
+    s.batches = []; s.currentBatch = null;      // the pick report is never kept on the phone, only in memory
+    s.requests = s.requests || [];
+    s.lastName = s.lastName || ""; s.handoffs = s.handoffs || []; s.handoffDraft = s.handoffDraft || "";
+    (s.entries || []).forEach(function (e) { delete e.lot; delete e.batchName; });
+    (s.handoffs || []).forEach(function (h) { delete h.lot; delete h.batchName; });
     return s;
   }
   function load() {
     try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.entries && s.targets) return normalize(s); } catch (e) {}
     return normalize({ targets: {}, entries: [] });
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { say("msg", "Could not save on this device.", true); } }
+  // everything except the pick report and its ticks is what gets saved on the phone until sign-out
+  function persisted() { var c = {}; Object.keys(state).forEach(function (k) { if (k !== "batches" && k !== "currentBatch") c[k] = state[k]; }); return c; }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(persisted())); } catch (e) { say("msg", "Could not save on this device.", true); } }
 
   var $ = function (id) { return document.getElementById(id); };
   function today() { var d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }
@@ -375,10 +437,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       var n = document.createElement("div"); n.className = "name"; n.textContent = e.name;
       var s = document.createElement("div"); s.className = "sub";
       s.textContent = e.shift + " · " + e.done.toLocaleString() + " weighed" + (t.value ? " of " + t.value.toLocaleString() : "") + (e.book != null ? " · batch " + e.book.toLocaleString() : "");
-      var ident = [e.lot ? "LOT/IM " + e.lot : "", e.batchName || ""].filter(Boolean).join(" · ");
-      var id2 = document.createElement("div"); id2.className = "sub"; id2.textContent = ident;
       left.appendChild(n); left.appendChild(s);
-      if (ident) left.appendChild(id2);
       var pc = document.createElement("div"); pc.className = "pct " + pctClass(p); pc.textContent = p === null ? "–" : Math.round(p) + "%";
       var bar = document.createElement("div"); bar.className = "bar"; var fill = document.createElement("i"); fill.style.width = Math.min(100, p || 0) + "%"; bar.appendChild(fill);
       var del = document.createElement("button"); del.className = "ghost small"; del.textContent = "Remove"; del.style.gridColumn = "1 / -1";
@@ -421,11 +480,6 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       else { btn.dataset.armed = "1"; btn.textContent = "Tap again to confirm"; setTimeout(function () { btn.dataset.armed = ""; btn.textContent = label; }, 3000); }
     };
   }
-  function fillIdentity() {
-    var b = curBatch();
-    if (b) { $("lot").value = b.lot || ""; $("batchName").value = b.product || ""; }
-  }
-
   // ---------- batch checklist ----------
   // the same batch list feeds two screens: the weigher ticks "done", the puller ticks "pulled"
   var WEIGH = { box: "batchBox", empty: "batchEmpty", sel: "batchSel", meta: "batchMeta", bar: "batchBar", items: "batchItems", rm: "batchRemove", flag: "done", at: "doneAt", word: "weighed" };
@@ -440,12 +494,12 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     var sel = $(p.sel); sel.textContent = "";
     state.batches.slice().reverse().forEach(function (b) {
       var o = document.createElement("option"); o.value = b.id;
-      o.textContent = (b.lot ? "LOT/IM " + b.lot : "No lot") + " · " + (b.product || "Batch") + " (" + count(b) + "/" + b.items.length + ")";
+      o.textContent = "Batch " + (state.batches.indexOf(b) + 1) + " (" + count(b) + "/" + b.items.length + ")";
       sel.appendChild(o);
     });
     sel.value = state.currentBatch;
     var b = curBatch(), done = count(b);
-    $(p.meta).textContent = (b.product || "Batch") + (b.lot ? " · LOT/IM " + b.lot : "") + " · " + done + " of " + b.items.length + " " + p.word + (done === b.items.length && done ? " · All done" : "");
+    $(p.meta).textContent = "Batch " + (state.batches.indexOf(b) + 1) + " · " + done + " of " + b.items.length + " " + p.word + (done === b.items.length && done ? " · All done" : "");
     $(p.bar).style.width = (b.items.length ? done / b.items.length * 100 : 0) + "%";
     var box = $(p.items); box.textContent = "";
     b.items.forEach(function (it) {
@@ -468,7 +522,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   function renderBatch() { renderList(WEIGH); renderList(PULL); }
 
   [WEIGH, PULL].forEach(function (p) {
-    $(p.sel).addEventListener("change", function () { state.currentBatch = $(p.sel).value; save(); fillIdentity(); render(); });
+    $(p.sel).addEventListener("change", function () { state.currentBatch = $(p.sel).value; save(); render(); });
   });
 
   // ---------- read an Excel pick report (.xlsx / .xlsm) ----------
@@ -564,7 +618,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       });
       if (!added.length) { say(msgId, "No ingredient rows found, or this batch is already loaded.", true); return; }
       added.forEach(function (b) { state.batches.push(b); });
-      state.currentBatch = added[0].id; save(); fillIdentity(); render();
+      state.currentBatch = added[0].id; save(); render();
       say(msgId, "Loaded " + added.length + " batch" + (added.length > 1 ? "es" : "") + ", " + added.reduce(function (n, b) { return n + b.items.length; }, 0) + " ingredients.");
     } catch (e) { say(msgId, "Could not read that file.", true); }
   }
@@ -572,30 +626,60 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   $("pFile").addEventListener("change", function (ev) { loadPickReport(ev, "pMsg"); });
 
   // ---------- material requests ----------
-  // Shared through Firebase so the PULLER ends the timer. Start and end times are stamped by the server.
-  var db = null, myUid = null, cloud = [], cloudErr = "";
-  function ms(v) { return v && v.toMillis ? v.toMillis() : (typeof v === "number" ? v : null); }
-  function startCloud() {
-    if (typeof firebase === "undefined" || !window.FIREBASE_CONFIG) { cloudErr = "Request tracking is not switched on yet."; return; }
-    try {
-      firebase.initializeApp(window.FIREBASE_CONFIG);
-      db = firebase.firestore();
-      cloudErr = "Connecting...";
-      firebase.auth().signInAnonymously().then(function (cred) {
-        myUid = cred.user.uid;
-        db.collection("requests").orderBy("requestedAt", "desc").limit(500).onSnapshot(function (snap) {
-          cloud = snap.docs.map(function (d) {
-            var x = d.data({ serverTimestamps: "estimate" });
-            return { id: d.id, name: x.name || "", lot: x.lot || "", batchName: x.batchName || "", item: x.item || "", status: x.status, uid: x.uid, by: x.deliveredBy || "", at: ms(x.requestedAt), done: ms(x.deliveredAt) };
-          });
-          cloudErr = ""; renderRequests();
-        }, function () { cloudErr = "Cannot reach the request list. Check your signal."; renderRequests(); });
-      }).catch(function () { cloudErr = "Could not connect to the request service."; renderRequests(); });
-    } catch (e) { cloudErr = "The request service failed to start."; }
+  // Stored in a Google Sheet by the same Google script that emails the handoff.
+  // The script stamps every time and checks the puller PIN, so a weigher cannot end their own timer.
+  var DEVICE = "d-" + uid() + uid();   // random for this page load, never saved
+  var cloud = [], openReqs = [], pullToday = null, syncErr = "", skew = 0;
+  function configured() { var c = window.HANDOFF_CONFIG; return !!(c && c.scriptUrl); }
+  function srv() { return Date.now() + skew; }   // the script's clock, so a wrong phone clock cannot change a timer
+  function api(body) {
+    if (!configured()) return Promise.reject(new Error("not set up"));
+    if (session && !body.token && body.action !== "login") body.token = session.token;
+    // text/plain keeps this a simple request, which a Google Apps Script web app accepts from a browser
+    return fetch(window.HANDOFF_CONFIG.scriptUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body) })
+      .then(function (res) { return res.json(); })
+      .then(function (j) {
+        if (j && j.now) skew = j.now - Date.now();
+        if (j && body.action !== "login") {
+          if (j.error === "auth") endSession("Your session ended. Sign in again.");
+          else if (j.error === "ack") showAck();
+        }
+        return j;
+      });
   }
+  function netMsg(e) { return e && e.message === "not set up" ? "Request tracking is not switched on yet." : "Cannot reach the request service. Check your signal."; }
 
-  function pullerName() { try { var p = JSON.parse(localStorage.getItem("partialsTracker.puller")); return (p && p.name) || ""; } catch (e) { return ""; } }
-  function applyLock() { document.body.setAttribute("data-unlocked", pullerName() ? "1" : "0"); }
+  function pullerName() { return session ? session.name : ""; }
+
+  function refreshMine() {
+    if (!session || ["weigher", "supervisor"].indexOf(session.role) < 0) return Promise.resolve();
+    return api({ action: "mine", device: DEVICE }).then(function (j) {
+      if (j && j.ok) { cloud = j.list; syncErr = ""; } else if (j && (j.error === "auth" || j.error === "ack")) { return; } else syncErr = "Could not load your requests.";
+      renderRequests();
+    }).catch(function (e) { syncErr = netMsg(e); renderRequests(); });
+  }
+  function refreshOpen() {
+    if (!session || ["puller", "supervisor"].indexOf(session.role) < 0) return Promise.resolve();
+    return api({ action: "open" }).then(function (j) {
+      if (j && j.ok) { openReqs = j.open; pullToday = j.today; syncErr = ""; }
+      else if (j && (j.error === "auth" || j.error === "ack")) { return; }
+      else syncErr = "Could not load the waiting requests.";
+      renderRequests();
+    }).catch(function (e) { syncErr = netMsg(e); renderRequests(); });
+  }
+  // phones only ask the script for news while they are looking at the screen and something is waiting
+  var syncStarted = false;
+  function startSync() {
+    refreshMine(); refreshOpen();
+    if (syncStarted) return;
+    syncStarted = true;
+    setInterval(function () {
+      if (document.hidden || !session) return;
+      if (document.body.getAttribute("data-role") === "puller") refreshOpen();
+      else if (cloud.some(function (r) { return r.status === "open"; })) refreshMine();
+    }, 10000);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden && session) { refreshMine(); refreshOpen(); } });
+  }
 
   function renderRequests() {
     var b = curBatch(), sel = $("reqItem"), keep = sel.value;
@@ -605,28 +689,31 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       var o = document.createElement("option"); o.value = i.id; o.textContent = i.item + " " + i.desc; sel.appendChild(o);
     });
     sel.value = keep;
-    $("reqNote").textContent = cloudErr;
-    $("reqBtn").disabled = !db || !myUid;
-
-    var open = cloud.filter(function (r) { return r.status === "open"; });
+    $("reqNote").textContent = syncErr;
+    $("reqBtn").disabled = !configured();
 
     // weigher: my own open requests
     var pend = $("reqPending"); pend.textContent = "";
-    open.filter(function (r) { return r.uid === myUid; }).forEach(function (r) {
+    cloud.filter(function (r) { return r.status === "open"; }).forEach(function (r) {
       var row = document.createElement("div"); row.className = "row pending";
       var left = document.createElement("div");
       var n = document.createElement("div"); n.className = "name"; n.textContent = r.name + " is waiting for the puller";
       var s = document.createElement("div"); s.className = "sub"; s.textContent = "Asked at " + clock(r.at) + (r.item ? " · " + r.item : "");
       left.appendChild(n); left.appendChild(s);
-      var w = document.createElement("div"); w.className = "wait"; w.dataset.since = r.at; w.textContent = dur(Date.now() - r.at);
+      var w = document.createElement("div"); w.className = "wait"; w.dataset.since = r.at; w.textContent = dur(srv() - r.at);
       var btns = document.createElement("div"); btns.className = "btns";
       var cx = document.createElement("button"); cx.type = "button"; cx.className = "ghost"; cx.textContent = "Cancel request";
-      armed(cx, "Cancel request", function () { db.collection("requests").doc(r.id).update({ status: "cancelled" }).catch(function () { say("reqMsg", "Could not cancel. Check your signal.", true); }); });
+      armed(cx, "Cancel request", function () {
+        api({ action: "cancel", device: DEVICE, id: r.id }).then(function (j) {
+          if (!j || !j.ok) say("reqMsg", "That request was already delivered or cancelled.", true);
+          return refreshMine();
+        }).catch(function (e) { say("reqMsg", netMsg(e), true); });
+      });
       btns.appendChild(cx);
       row.appendChild(left); row.appendChild(w); row.appendChild(btns); pend.appendChild(row);
     });
 
-    // day stats and history (all weighers)
+    // day stats and history (this phone's own requests)
     var date = $("viewDate").value;
     var day = cloud.filter(function (r) { return r.at && dateOf(r.at) === date; });
     var done = day.filter(function (r) { return r.status === "delivered" && r.done; });
@@ -635,7 +722,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     $("rAvg").textContent = waits.length ? dur(waits.reduce(function (a, c) { return a + c; }, 0) / waits.length) : "–";
     $("rMax").textContent = waits.length ? dur(Math.max.apply(null, waits)) : "–";
     var box = $("reqDone"); box.textContent = "";
-    day.filter(function (r) { return r.status !== "open"; }).forEach(function (r) {
+    day.filter(function (r) { return r.status !== "open"; }).sort(function (x, y) { return y.at - x.at; }).forEach(function (r) {
       var row = document.createElement("div"); row.className = "row";
       var left = document.createElement("div");
       var n = document.createElement("div"); n.className = "name"; n.textContent = r.name;
@@ -647,63 +734,51 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     });
 
     // puller: every open request, with the button that stops the timer
-    $("pullWho").textContent = pullerName() ? "Signed in as " + pullerName() : "";
+    $("pullWho").textContent = pullerName() ? "Signed in as " + pullerName() + (pullToday ? " · Today: " + pullToday.count + " request" + (pullToday.count === 1 ? "" : "s") + (pullToday.avgSec !== null ? ", average wait " + dur(pullToday.avgSec * 1000) + ", longest " + dur(pullToday.maxSec * 1000) : "") : "") : "";
     var pw = $("pullWait"); pw.textContent = "";
-    if (!open.length) { var em = document.createElement("div"); em.className = "empty"; em.textContent = cloudErr || "No requests waiting."; pw.appendChild(em); }
-    open.slice().reverse().forEach(function (r) {
+    if (!openReqs.length) { var em = document.createElement("div"); em.className = "empty"; em.textContent = syncErr || "No requests waiting."; pw.appendChild(em); }
+    openReqs.slice().sort(function (x, y) { return x.at - y.at; }).forEach(function (r) {
       var row = document.createElement("div"); row.className = "row pending";
       var left = document.createElement("div");
       var n = document.createElement("div"); n.className = "name"; n.textContent = r.name + " needs material";
       var s = document.createElement("div"); s.className = "sub"; s.textContent = "Asked at " + clock(r.at) + (r.item ? " · " + r.item : "");
       left.appendChild(n); left.appendChild(s);
-      var id2 = [r.lot ? "LOT/IM " + r.lot : "", r.batchName || ""].filter(Boolean).join(" · ");
-      if (id2) { var s2 = document.createElement("div"); s2.className = "sub"; s2.textContent = id2; left.appendChild(s2); }
-      var w = document.createElement("div"); w.className = "wait"; w.dataset.since = r.at; w.textContent = dur(Date.now() - r.at);
+      var w = document.createElement("div"); w.className = "wait"; w.dataset.since = r.at; w.textContent = dur(srv() - r.at);
       var got = document.createElement("button"); got.type = "button"; got.className = "big"; got.textContent = "Delivered";
       armed(got, "Delivered", function () {
-        db.collection("requests").doc(r.id).update({ status: "delivered", deliveredAt: firebase.firestore.FieldValue.serverTimestamp(), deliveredBy: pullerName() })
-          .then(function () { say("pullMsg", "Delivered to " + r.name + "."); })
-          .catch(function (e) { say("pullMsg", e && e.code === "permission-denied" ? "You cannot deliver a request made from this same phone." : "Could not save. Check your signal.", true); });
+        api({ action: "deliver", id: r.id, device: DEVICE }).then(function (j) {
+          if (j && j.ok) { say("pullMsg", "Delivered to " + r.name + "."); }
+          else if (j && j.error === "same") say("pullMsg", "You cannot deliver your own request.", true);
+          else if (j && (j.error === "auth" || j.error === "ack")) { return; }
+          else say("pullMsg", "That request is already closed.", true);
+          return refreshOpen();
+        }).catch(function (e) { say("pullMsg", netMsg(e), true); });
       });
       row.appendChild(left); row.appendChild(w); row.appendChild(got); pw.appendChild(row);
     });
   }
 
   $("reqBtn").addEventListener("click", function () {
-    var name = $("reqName").value.trim();
+    var name = $("reqName").value.trim(), btn = $("reqBtn");
     if (!name) { say("reqMsg", "Enter your name first.", true); $("reqName").focus(); return; }
-    if (!db || !myUid) { say("reqMsg", "Request service is not ready. Check your signal.", true); return; }
-    if (cloud.some(function (r) { return r.status === "open" && r.uid === myUid; })) {
-      say("reqMsg", "You already have a request waiting for the puller.", true); return;
-    }
-    var b = curBatch(), id = $("reqItem").value, it = b && b.items.filter(function (i) { return i.id === id; })[0], acked = false;
+    if (cloud.some(function (r) { return r.status === "open"; })) { say("reqMsg", "You already have a request waiting for the puller.", true); return; }
+    var b = curBatch(), id = $("reqItem").value, it = b && b.items.filter(function (i) { return i.id === id; })[0];
     state.lastName = name; if (!$("name").value) $("name").value = name; save();
-    db.collection("requests").add({
-      name: name, lot: b ? b.lot : "", batchName: b ? b.product : "", item: it ? it.item + " " + it.desc : "",
-      status: "open", uid: myUid, clientAt: Date.now(), requestedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }).then(function () { acked = true; say("reqMsg", "Request sent to the puller. Timer started."); })
-      .catch(function () { acked = true; say("reqMsg", "Request failed. Check your signal and try again.", true); });
-    setTimeout(function () { if (!acked) say("reqMsg", "No signal yet. The puller has NOT received your request.", true); }, 6000);
-    $("reqItem").value = "";
+    btn.disabled = true; btn.textContent = "Sending...";
+    api({ action: "request", device: DEVICE, name: name, item: it ? it.item + " " + it.desc : "" }).then(function (j) {
+      if (j && j.ok) { say("reqMsg", "Request sent to the puller. Timer started."); $("reqItem").value = ""; return refreshMine(); }
+      var errs = { open: "You already have a request waiting for the puller.", limit: "Too many requests right now. Try again in a few minutes.", invalid: "Enter your name first." };
+      say("reqMsg", errs[j && j.error] || "The request was not accepted. Try again.", true);
+    }).catch(function (e) {
+      say("reqMsg", e && e.message === "not set up" ? "Request tracking is not switched on yet." : "No signal. The puller has NOT received your request.", true);
+    }).then(function () { btn.textContent = "Partials requested"; btn.disabled = !configured(); });
   });
   $("reqName").addEventListener("change", function () { state.lastName = $("reqName").value.trim(); save(); });
 
-  $("unlockForm").addEventListener("submit", function (ev) {
-    ev.preventDefault();
-    var name = $("pullName").value.trim(), pin = $("pullPin").value.trim();
-    if (!db || !myUid) { say("unlockMsg", "Not connected. Check your signal and try again.", true); return; }
-    db.collection("config").doc("puller").get().then(function (snap) {
-      var real = snap.exists ? String(snap.data().pin || "") : "";
-      if (!real) { say("unlockMsg", "No puller PIN has been set up yet. Ask your supervisor.", true); return; }
-      if (pin !== real) { say("unlockMsg", "That PIN is not right.", true); return; }
-      try { localStorage.setItem("partialsTracker.puller", JSON.stringify({ name: name })); } catch (e) {}
-      $("pullPin").value = ""; applyLock(); renderRequests();
-    }).catch(function () { say("unlockMsg", "Could not check the PIN. Check your signal.", true); });
-  });
-  $("lockBtn").addEventListener("click", function () { try { localStorage.removeItem("partialsTracker.puller"); } catch (e) {} applyLock(); });
+
 
   setInterval(function () {
-    Array.prototype.forEach.call(document.querySelectorAll("[data-since]"), function (el) { el.textContent = dur(Date.now() - Number(el.dataset.since)); });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-since]"), function (el) { el.textContent = dur(srv() - Number(el.dataset.since)); });
   }, 1000);
 
   // ---------- shift handoff (emailed to the supervisors through EmailJS) ----------
@@ -711,7 +786,6 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   var sendingHandoff = {};
   function handoffMessage(h) {
     var lines = ["Shift Handoff", "Weigher: " + h.name, "Shift: " + h.shift, "Submitted: " + h.date + " " + clock(h.at)];
-    if (h.lot || h.batchName) lines.push("LOT/IM: " + (h.lot || "-") + (h.batchName ? "   Batch: " + h.batchName : ""));
     if (h.weighed != null) lines.push("Partials weighed today: " + h.weighed.toLocaleString() + (h.target ? " of " + h.target.toLocaleString() + " (" + Math.round(h.weighed / h.target * 100) + "%)" : ""));
     if (h.remaining && h.remaining.length) {
       lines.push("", "Still to weigh (" + h.remaining.length + "):");
@@ -721,17 +795,18 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     return lines.join("\n");
   }
   function sendHandoff(h) {
-    var c = window.HANDOFF_CONFIG;
-    if (!c || !c.scriptUrl) return Promise.reject(new Error("not set up"));
-    // the mailer refuses links and email addresses, so strip them here and real handoffs never trip it
+    // the script refuses links and email addresses, so strip them here and real handoffs never trip it
     var LINKS = /(https?:\/\/|ftp:\/\/|mailto:|www\.)\S*|[\w.+-]+@[\w-]+\.[a-z]{2,}|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|co|us|ly|me|xyz|ru|info|biz|app|dev|link|site|online|top|click|cc|tk)\b\S*/gi;
     var clean = function (t) { return t.replace(LINKS, "[link removed]"); };
-    // text/plain keeps this a simple request, which a Google Apps Script web app accepts from a browser
-    return fetch(c.scriptUrl, {
-      method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ subject: clean("Shift Handoff: " + h.shift + " shift, " + h.name + ", " + h.date), message: clean(handoffMessage(h)) })
-    }).then(function (res) { return res.json(); })
-      .then(function (j) { if (!j || !j.ok) throw new Error("send failed"); });
+    return api({ action: "handoff", subject: clean("Shift Handoff: " + h.shift + " shift, " + h.name + ", " + h.date), message: clean(handoffMessage(h)) })
+      .then(function (j) { if (!j || !j.ok) throw new Error(j && j.error ? j.error : "send failed"); });
+  }
+  function handoffErr(e) {
+    var m = e && e.message;
+    if (m === "not set up") return "Saved, but email is not set up yet. Tap Send again once it is.";
+    if (m === "limit") return "Saved, but the daily handoff limit was reached. Ask a supervisor.";
+    if (m === "auth" || m === "ack") return "Saved. Sign in again, then tap Send again.";
+    return "Saved, but the email did not go out. Check your signal and tap Send again.";
   }
   function deliverHandoff(h, after) {
     if (sendingHandoff[h.id]) return;
@@ -739,7 +814,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     sendHandoff(h).then(function () {
       h.sent = true; h.sentAt = Date.now(); save(); say("hoMsg", "Handoff emailed to the supervisors.");
     }).catch(function (e) {
-      say("hoMsg", e && e.message === "not set up" ? "Saved, but email is not set up yet. Tap Send again once it is." : "Saved, but the email did not go out. Check your signal and tap Send again.", true);
+      say("hoMsg", handoffErr(e), true);
     }).then(function () { delete sendingHandoff[h.id]; renderHandoff(); if (after) after(); });
   }
   function renderHandoff() {
@@ -771,7 +846,6 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     var day = today(), b = curBatch(), mine = state.entries.filter(function (e) { return e.date === day && e.name.toLowerCase() === name.toLowerCase(); });
     var h = {
       id: uid(), at: Date.now(), date: day, name: name, shift: $("hoShift").value,
-      lot: b ? b.lot : "", batchName: b ? b.product : "",
       weighed: mine.length ? mine.reduce(function (a, e) { return a + e.done; }, 0) : null, target: targetFor(day).value,
       remaining: $("hoItems").checked && b ? b.items.filter(function (i) { return !i.done; }).map(function (i) { return i.item + " " + i.desc; }) : [],
       notes: notes, sent: false, sentAt: null
@@ -808,16 +882,16 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     ev.preventDefault();
     var name = $("name").value.trim(), done = num($("done").value), book = num($("book").value);
     if (!name || done === null || done < 0) { say("msg", "Enter a name and the partials weighed.", true); return; }
-    state.entries.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), date: $("viewDate").value, shift: $("shift").value, name: name, done: done, book: book, lot: $("lot").value.trim(), batchName: $("batchName").value.trim() });
+    state.entries.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), date: $("viewDate").value, shift: $("shift").value, name: name, done: done, book: book });
     state.lastName = name; $("reqName").value = name;
-    save(); $("done").value = ""; $("book").value = ""; $("lot").value = ""; $("batchName").value = ""; fillIdentity(); render(); say("msg", "Saved.");
+    save(); $("done").value = ""; $("book").value = ""; render(); say("msg", "Saved.");
   });
 
-  var HEAD = ["Date", "Shift", "Weigher", "LOT/IM number", "Batch name", "Partials weighed", "Partials in batch", "Target", "Completion %"];
+  var HEAD = ["Date", "Shift", "Weigher", "Partials weighed", "Partials in batch", "Target", "Completion %"];
   function exportRows() {
     return state.entries.slice().sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }).map(function (e) {
       var t = targetFor(e.date).value;
-      return [e.date, e.shift, e.name, e.lot || "", e.batchName || "", e.done, e.book == null ? "" : e.book, t == null ? "" : t, t ? e.done / t : ""];
+      return [e.date, e.shift, e.name, e.done, e.book == null ? "" : e.book, t == null ? "" : t, t ? e.done / t : ""];
     });
   }
 
@@ -841,7 +915,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   $("csv").addEventListener("click", function () {
     var q = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
     var lines = [HEAD.join(",")].concat(exportRows().map(function (r) {
-      r = r.slice(); r[1] = q(r[1]); r[2] = q(r[2]); r[3] = q(r[3]); r[4] = q(r[4]); r[8] = r[8] === "" ? "" : (r[8] * 100).toFixed(1);
+      r = r.slice(); r[1] = q(r[1]); r[2] = q(r[2]); r[6] = r[6] === "" ? "" : (r[6] * 100).toFixed(1);
       return r.join(",");
     }));
     deliver(new Blob([lines.join("\n")], { type: "text/csv" }), "partials-" + today() + ".csv", "CSV exported.");
@@ -871,14 +945,14 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   function requestRows() {
     return cloud.slice().sort(function (x, y) { return (x.at || 0) - (y.at || 0); }).map(function (r) {
       var w = r.done && r.at ? r.done - r.at : null;
-      return [r.at ? dateOf(r.at) : "", r.name, r.lot, r.batchName, r.item, r.at ? clock24(r.at) : "", r.done ? clock24(r.done) : "", w === null ? "" : Math.round(w / 600) / 100, w === null ? "" : dur(w), r.by, r.status];
+      return [r.at ? dateOf(r.at) : "", r.name, r.item, r.at ? clock24(r.at) : "", r.done ? clock24(r.done) : "", w === null ? "" : Math.round(w / 600) / 100, w === null ? "" : dur(w), r.by, r.status];
     });
   }
   function itemRows() {
     var out = [];
-    state.batches.forEach(function (b) {
+    state.batches.forEach(function (b, bi) {
       b.items.forEach(function (i) {
-        out.push([b.loaded || "", b.lot || "", b.product || "", i.item, i.desc, i.weight === null ? "" : i.weight, i.unit || "", i.done ? "Yes" : "No", i.doneAt ? dateOf(i.doneAt) + " " + clock24(i.doneAt) : "", i.pulled ? "Yes" : "No", i.pulledAt ? dateOf(i.pulledAt) + " " + clock24(i.pulledAt) : ""]);
+        out.push([b.loaded || "", "Batch " + (bi + 1), i.item, i.desc, i.weight === null ? "" : i.weight, i.unit || "", i.done ? "Yes" : "No", i.doneAt ? dateOf(i.doneAt) + " " + clock24(i.doneAt) : "", i.pulled ? "Yes" : "No", i.pulledAt ? dateOf(i.pulledAt) + " " + clock24(i.pulledAt) : ""]);
       });
     });
     return out;
@@ -917,10 +991,10 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
 
   $("xlsx").addEventListener("click", function () {
     if (!state.entries.length && !cloud.length && !state.batches.length && !state.handoffs.length) { say("dataMsg", "Nothing to export yet.", true); return; }
-    var sheets = [{ name: "Partials", head: HEAD, rows: exportRows(), pct: 8 }];
-    if (cloud.length) sheets.push({ name: "Material requests", head: ["Date", "Weigher", "LOT/IM number", "Batch name", "Item needed", "Requested at", "Delivered at", "Wait (min)", "Wait (m:ss)", "Delivered by", "Status"], rows: requestRows(), pct: -1 });
-    if (state.batches.length) sheets.push({ name: "Batch items", head: ["Loaded", "LOT/IM number", "Batch name", "Item", "Description", "Weight", "Unit", "Weighed", "Weighed at", "Pulled", "Pulled at"], rows: itemRows(), pct: -1 });
-    if (state.handoffs.length) sheets.push({ name: "Shift handoffs", head: ["Date", "Time", "Weigher", "Shift", "LOT/IM number", "Batch name", "Partials weighed", "Target", "Items still to weigh", "Notes", "Emailed"], rows: state.handoffs.map(function (h) { return [h.date, clock24(h.at), h.name, h.shift, h.lot || "", h.batchName || "", h.weighed === null ? "" : h.weighed, h.target || "", h.remaining.length, h.notes, h.sent ? "Yes" : "No"]; }), pct: -1 });
+    var sheets = [{ name: "Partials", head: HEAD, rows: exportRows(), pct: 6 }];
+    if (cloud.length) sheets.push({ name: "Material requests", head: ["Date", "Weigher", "Item needed", "Requested at", "Delivered at", "Wait (min)", "Wait (m:ss)", "Delivered by", "Status"], rows: requestRows(), pct: -1 });
+    if (state.batches.length) sheets.push({ name: "Batch items", head: ["Loaded", "Batch", "Item", "Description", "Weight", "Unit", "Weighed", "Weighed at", "Pulled", "Pulled at"], rows: itemRows(), pct: -1 });
+    if (state.handoffs.length) sheets.push({ name: "Shift handoffs", head: ["Date", "Time", "Weigher", "Shift", "Partials weighed", "Target", "Items still to weigh", "Notes", "Emailed"], rows: state.handoffs.map(function (h) { return [h.date, clock24(h.at), h.name, h.shift, h.weighed === null ? "" : h.weighed, h.target || "", h.remaining.length, h.notes, h.sent ? "Yes" : "No"]; }), pct: -1 });
     deliver(buildXlsx(sheets), "partials-" + today() + ".xlsx", "Excel file ready.");
   });
 
@@ -932,13 +1006,13 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       try { document.execCommand("copy"); done(); } catch (e) { say("dataMsg", "Copy failed.", true); } ta.remove();
     }
   }
-  $("backup").addEventListener("click", function () { copy(JSON.stringify(state), "Backup copied. Paste it somewhere safe."); });
+  $("backup").addEventListener("click", function () { copy(JSON.stringify(persisted()), "Backup copied. Paste it somewhere safe."); });
   $("restore").addEventListener("click", function () { $("restoreBox").hidden = !$("restoreBox").hidden; });
   $("restoreGo").addEventListener("click", function () {
     try {
       var s = JSON.parse($("restoreText").value);
       if (!s || !Array.isArray(s.entries) || typeof s.targets !== "object") throw 0;
-      state = normalize(s); save(); render(); $("restoreText").value = ""; $("restoreBox").hidden = true; say("dataMsg", "Backup restored.");
+      var keepB = state.batches, keepC = state.currentBatch; state = normalize(s); state.batches = keepB; state.currentBatch = keepC; save(); render(); $("restoreText").value = ""; $("restoreBox").hidden = true; say("dataMsg", "Backup restored.");
     } catch (e) { say("dataMsg", "That is not a valid backup.", true); }
   });
 
@@ -946,21 +1020,201 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     navigator.serviceWorker.register("sw.js").catch(function () {});
   }
 
-  var ROLE_KEY = "partialsTracker.role";
+  // ---------- sign-in, acknowledgment letter, roles and administration ----------
+  // The screens here are only a convenience. The Google script checks the PIN, the role and the signed
+  // letter on every action, so nothing in this page can grant access.
+  var SESSION_KEY = "partialsTracker.session";
+  var session = null, ackVersion = "";
+  try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
+  if (!session || !session.token || !(session.exp > Date.now())) session = null;
+  var flash = ""; try { flash = sessionStorage.getItem("partialsTracker.msg") || ""; sessionStorage.removeItem("partialsTracker.msg"); } catch (e) {}
+  // nothing stays on the phone once someone signs out or their session ends
+  function wipePhone() {
+    ["partialsTracker.v1", SESSION_KEY, "partialsTracker.device", "partialsTracker.lastId", "partialsTracker.puller", "partialsTracker.role"].forEach(function (k) { try { localStorage.removeItem(k); } catch (e) {} });
+  }
+  if (!session) { wipePhone(); state = normalize({ targets: {}, entries: [] }); }
+  function saveSession() { try { if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session)); else localStorage.removeItem(SESSION_KEY); } catch (e) {} }
+  var VIEWS = { weigher: ["weigher"], puller: ["puller"], supervisor: ["admin", "weigher", "puller"] };
+
+  function showHome(msg) {
+    $("home").hidden = false; document.body.setAttribute("data-auth", "out");
+    $("signin").hidden = false; $("ackForm").hidden = true;
+    $("siPin").value = "";
+    if (msg) say("siMsg", msg, /ended|again|not right/i.test(msg));
+    setTimeout(function () { ($("siId").value ? $("siPin") : $("siId")).focus(); }, 50);
+  }
+  function endSession(msg) {
+    wipePhone();
+    try { sessionStorage.setItem("partialsTracker.msg", msg || ""); } catch (e) {}
+    location.reload();                 // a fresh page, so nothing is left in memory either
+  }
+  function enterApp() {
+    $("home").hidden = true; document.body.setAttribute("data-auth", "in");
+    var views = VIEWS[session.role] || ["weigher"];
+    $("roleSeg").hidden = views.length < 2;
+    $("roleA").hidden = views.indexOf("admin") < 0; $("roleW").hidden = views.indexOf("weigher") < 0 || views.length < 2; $("roleP").hidden = views.indexOf("puller") < 0 || views.length < 2;
+    $("who").textContent = session.name + " (" + session.role + ")";
+    $("reqName").value = session.name; $("hoName").value = session.name;
+    if (!$("name").value) $("name").value = session.name;
+    setRole(views[0]);
+    startSync();
+  }
+
+  $("signin").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var id = $("siId").value.trim(), pin = $("siPin").value.trim(), btn = $("siBtn");
+    if (!id || !pin) { say("siMsg", "Enter your ID and PIN.", true); return; }
+    btn.disabled = true; btn.textContent = "Signing in...";
+    api({ action: "login", id: id, pin: pin, device: DEVICE }).then(function (j) {
+      if (j && j.ok) {
+        session = { token: j.token, id: j.person.id, name: j.person.name, role: j.person.role, exp: Date.now() + 12 * 3600000 };
+        saveSession();
+        $("siPin").value = "";
+        if (j.needsAck) showAck(); else enterApp();
+        return;
+      }
+      var errs = { locked: "Too many wrong tries. Wait 15 minutes, or ask a supervisor.", credentials: "That ID or PIN is not right." };
+      say("siMsg", errs[j && j.error] || "Could not sign in. Try again.", true);
+    }).catch(function (e) { say("siMsg", e && e.message === "not set up" ? "The app is not switched on yet." : "Cannot reach the service. Check your signal.", true); })
+      .then(function () { btn.disabled = false; btn.textContent = "Sign in"; });
+  });
+  var soTimer = null;
+  $("signOut").addEventListener("click", function () {
+    var b = $("signOut");
+    if (b.dataset.armed) { endSession("You are signed out. This phone's data was erased."); return; }
+    var unsent = state.handoffs.some(function (h) { return !h.sent; });
+    b.dataset.armed = "1"; b.textContent = unsent ? "Unsent handoff will be erased. Tap again" : "Tap again to erase and sign out";
+    clearTimeout(soTimer); soTimer = setTimeout(function () { b.dataset.armed = ""; b.textContent = "Sign out"; }, 4000);
+  });
+
+  // ---- acknowledgment letter ----
+  var sigPad = $("sigPad"), pctx = sigPad.getContext("2d"), inked = 0, drawing = false, lastPt = null, readToEnd = false;
+  function clearPad() { pctx.fillStyle = "#fff"; pctx.fillRect(0, 0, sigPad.width, sigPad.height); pctx.strokeStyle = "#111"; pctx.lineWidth = 4; pctx.lineCap = "round"; pctx.lineJoin = "round"; inked = 0; updateAck(); }
+  function padPt(e) { var r = sigPad.getBoundingClientRect(); return { x: (e.clientX - r.left) * sigPad.width / r.width, y: (e.clientY - r.top) * sigPad.height / r.height }; }
+  sigPad.addEventListener("pointerdown", function (e) { drawing = true; lastPt = padPt(e); try { sigPad.setPointerCapture(e.pointerId); } catch (x) {} pctx.beginPath(); pctx.moveTo(lastPt.x, lastPt.y); pctx.lineTo(lastPt.x + .1, lastPt.y + .1); pctx.stroke(); e.preventDefault(); });
+  sigPad.addEventListener("pointermove", function (e) {
+    if (!drawing) return;
+    var p = padPt(e); pctx.beginPath(); pctx.moveTo(lastPt.x, lastPt.y); pctx.lineTo(p.x, p.y); pctx.stroke();
+    inked += Math.sqrt(Math.pow(p.x - lastPt.x, 2) + Math.pow(p.y - lastPt.y, 2)); lastPt = p; e.preventDefault();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (t) { sigPad.addEventListener(t, function () { if (drawing) { drawing = false; updateAck(); } }); });
+  $("sigClear").addEventListener("click", clearPad);
+
+  function updateAck() {
+    $("ackFields").classList.toggle("locked", !readToEnd);
+    $("ackSubmit").disabled = !(readToEnd && $("ackCheck").checked && $("ackName").value.trim().length >= 3 && inked > 120);
+  }
+  function checkScroll() { var l = $("letter"); if (l.scrollTop + l.clientHeight >= l.scrollHeight - 12) { readToEnd = true; updateAck(); } }
+  $("letter").addEventListener("scroll", checkScroll);
+  $("ackCheck").addEventListener("change", updateAck); $("ackName").addEventListener("input", updateAck);
+
+  function showAck() {
+    $("home").hidden = false; document.body.setAttribute("data-auth", "out");
+    $("signin").hidden = true; $("ackForm").hidden = false;
+    $("letterTitle").textContent = "Loading..."; $("letter").textContent = "";
+    readToEnd = false; $("ackCheck").checked = false; $("ackName").value = ""; clearPad();
+    api({ action: "letter" }).then(function (j) {
+      if (!j || !j.ok) { $("letterTitle").textContent = "Could not load the letter. Check your signal."; return; }
+      var L = j.letter; ackVersion = L.version;
+      $("letterTitle").textContent = L.title;
+      var box = $("letter"); box.textContent = "";
+      L.sections.forEach(function (s) {
+        if (s.h) { var h = document.createElement("h3"); h.textContent = s.h; box.appendChild(h); }
+        var p = document.createElement("p"); p.textContent = s.t; box.appendChild(p);
+      });
+      $("letterStatement").textContent = L.statement;
+      $("ackSignedAs").textContent = "Signing in as " + session.name + " (" + session.id + ")";
+      box.scrollTop = 0; setTimeout(checkScroll, 100);
+    }).catch(function () { $("letterTitle").textContent = "Cannot reach the service. Check your signal."; });
+  }
+  $("ackCancel").addEventListener("click", function () { endSession(""); });
+  $("ackForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var btn = $("ackSubmit"); btn.disabled = true; btn.textContent = "Saving...";
+    api({ action: "acknowledge", version: ackVersion, typedName: $("ackName").value.trim(), signature: sigPad.toDataURL("image/png"), device: DEVICE }).then(function (j) {
+      if (j && j.ok) { $("ackForm").hidden = true; enterApp(); return; }
+      var errs = { version: "The letter was just updated. It has been reloaded. Read it again.", name: "Type your full name.", signature: "Draw your signature in the box." };
+      say("ackMsg", errs[j && j.error] || "Could not save your signature. Try again.", true);
+      if (j && j.error === "version") showAck();
+    }).catch(function () { say("ackMsg", "No signal. Your signature was not saved. Try again.", true); })
+      .then(function () { btn.textContent = "Sign and continue"; updateAck(); });
+  });
+
+  // ---- roles: a supervisor can move between Admin, Weigher and Puller ----
   function setRole(r) {
     document.body.setAttribute("data-role", r);
-    $("roleW").setAttribute("aria-pressed", r === "weigher"); $("roleP").setAttribute("aria-pressed", r === "puller");
-    try { localStorage.setItem(ROLE_KEY, r); } catch (e) {}
+    $("pageTitle").textContent = r === "admin" ? "Admin" : r === "puller" ? "Puller" : "Weigher";
+    $("roleW").setAttribute("aria-pressed", r === "weigher"); $("roleP").setAttribute("aria-pressed", r === "puller"); $("roleA").setAttribute("aria-pressed", r === "admin");
+    if (r === "admin") loadAdmin(); else if (r === "puller") refreshOpen(); else refreshMine();
   }
   $("roleW").addEventListener("click", function () { setRole("weigher"); });
   $("roleP").addEventListener("click", function () { setRole("puller"); });
-  var savedRole = "weigher"; try { savedRole = localStorage.getItem(ROLE_KEY) === "puller" ? "puller" : "weigher"; } catch (e) {}
-  setRole(savedRole);
+  $("roleA").addEventListener("click", function () { setRole("admin"); });
 
-  $("hoName").value = state.lastName; $("hoNotes").value = state.handoffDraft;
-  applyLock(); startCloud();
-  $("reqName").value = $("name").value = state.lastName;
+  // ---- administration (supervisors only; the script refuses everyone else) ----
+  function fmtWhen(ts) { return ts ? dateOf(ts) + " " + clock(ts) : "never"; }
+  function showNewPin(who, id, pin) {
+    var box = $("newPinBox"); box.textContent = "";
+    var t = document.createElement("div"); t.className = "name"; t.textContent = "PIN for " + who + " (ID " + id + ")";
+    var big = document.createElement("div"); big.className = "wait"; big.textContent = pin; big.style.fontFamily = "monospace"; big.style.letterSpacing = ".15em";
+    var n = document.createElement("div"); n.className = "sub"; n.textContent = "Shown once. Tell them privately. They will be asked to sign the letter the first time they sign in.";
+    var b = document.createElement("button"); b.type = "button"; b.className = "ghost small"; b.textContent = "I have given it to them"; b.onclick = function () { box.hidden = true; box.textContent = ""; };
+    var left = document.createElement("div"); left.appendChild(t); left.appendChild(n);
+    box.appendChild(left); box.appendChild(big); box.appendChild(b); box.hidden = false;
+  }
+  function loadAdmin() {
+    api({ action: "people" }).then(function (j) {
+      var box = $("people"); box.textContent = "";
+      if (!j || !j.ok) { say("admMsg", "Could not load the list.", true); return; }
+      $("letterNote").textContent = "Current letter version: " + j.letterVersion + ". To change the letter, edit the Letter tab in the Google Sheet and change its Version cell. Everyone then signs again.";
+      j.people.forEach(function (p) {
+        var row = document.createElement("div"); row.className = "row";
+        var left = document.createElement("div");
+        var n = document.createElement("div"); n.className = "name"; n.textContent = p.name + " · " + p.role;
+        var s = document.createElement("div"); s.className = "sub"; s.textContent = "ID " + p.id + " · last sign-in " + fmtWhen(p.last) + (p.status !== "active" ? " · " + p.status.toUpperCase() : "");
+        left.appendChild(n); left.appendChild(s);
+        var pill = document.createElement("div"); pill.className = "pct " + (p.needsAck ? "warn" : "good");
+        pill.textContent = p.needsAck ? "Needs to sign" : "Signed " + p.ackVersion;
+        var btns = document.createElement("div"); btns.className = "actions"; btns.style.gridColumn = "1 / -1";
+        var rp = document.createElement("button"); rp.type = "button"; rp.className = "ghost small"; rp.textContent = "Reset PIN";
+        armed(rp, "Reset PIN", function () { api({ action: "resetPin", id: p.id }).then(function (r) { if (r && r.ok) { showNewPin(r.name, r.id, r.pin); loadAdmin(); } else say("admMsg", "Could not reset the PIN.", true); }); });
+        var st = document.createElement("button"); st.type = "button"; st.className = "ghost small"; st.textContent = p.status === "active" ? "Revoke access" : "Restore access";
+        armed(st, st.textContent, function () { api({ action: "setStatus", id: p.id, status: p.status === "active" ? "revoked" : "active" }).then(function (r) { if (r && r.ok) loadAdmin(); else say("admMsg", r && r.error === "self" ? "You cannot revoke yourself." : "Could not change access.", true); }); });
+        btns.appendChild(rp); btns.appendChild(st);
+        row.appendChild(left); row.appendChild(pill); row.appendChild(btns); box.appendChild(row);
+      });
+    }).catch(function (e) { say("admMsg", netMsg(e), true); });
+    api({ action: "signins" }).then(function (j) {
+      var box = $("signins"); box.textContent = "";
+      if (!j || !j.ok) return;
+      if (!j.list.length) { var em = document.createElement("div"); em.className = "empty"; em.textContent = "No sign-ins yet."; box.appendChild(em); }
+      j.list.forEach(function (x) {
+        var row = document.createElement("div"); row.className = "row";
+        var left = document.createElement("div"); var n = document.createElement("div"); n.className = "name"; n.textContent = x.id;
+        var s = document.createElement("div"); s.className = "sub"; s.textContent = fmtWhen(x.at); left.appendChild(n); left.appendChild(s);
+        var pill = document.createElement("div"); pill.className = "pct " + (x.result === "signed in" ? "good" : "bad"); pill.textContent = x.result;
+        row.appendChild(left); row.appendChild(pill); box.appendChild(row);
+      });
+    }).catch(function () {});
+  }
+  $("addPerson").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    api({ action: "addPerson", id: $("apId").value.trim(), name: $("apName").value.trim(), role: $("apRole").value }).then(function (j) {
+      if (j && j.ok) { $("apId").value = ""; $("apName").value = ""; showNewPin(j.name, j.id, j.pin); loadAdmin(); return; }
+      var errs = { exists: "That ID is already in use.", invalid: "Enter an ID, a name and a role.", role: "Only supervisors can add people." };
+      say("admMsg", errs[j && j.error] || "Could not add the person.", true);
+    }).catch(function (e) { say("admMsg", netMsg(e), true); });
+  });
+
+  $("hoNotes").value = state.handoffDraft;
+  $("name").value = state.lastName;
   render();
+  if (session) {
+    enterApp();
+    api({ action: "me" }).then(function (j) { if (j && j.ok && j.needsAck) showAck(); }).catch(function () {});
+  } else {
+    showHome(flash);
+  }
 })();
 </script>
 </body>
