@@ -461,7 +461,7 @@ function listPeople() {
 function recentSignins() {
   var sh = tab("signins"), n = sh.getLastRow();
   if (n < 2) return { ok: true, list: [] };
-  var start = Math.max(2, n - 59);
+  var start = Math.max(2, n - 4);
   var list = sh.getRange(start, 1, n - start + 1, 4).getValues().map(function (r) { return { at: ms(r[0]), id: r[1], result: r[2] }; }).reverse();
   return { ok: true, list: list };
 }

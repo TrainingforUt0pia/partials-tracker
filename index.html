@@ -211,7 +211,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   </section>
 
   <section class="card a-only" aria-labelledby="sgH">
-    <h2 id="sgH">Recent sign-ins</h2>
+    <h2 id="sgH">Last 5 sign-ins</h2>
     <div class="rows" id="signins"></div>
   </section>
 
@@ -1213,7 +1213,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       var box = $("signins"); box.textContent = "";
       if (!j || !j.ok) return;
       if (!j.list.length) { var em = document.createElement("div"); em.className = "empty"; em.textContent = "No sign-ins yet."; box.appendChild(em); }
-      j.list.forEach(function (x) {
+      j.list.slice(0, 5).forEach(function (x) {
         var row = document.createElement("div"); row.className = "row";
         var left = document.createElement("div"); var n = document.createElement("div"); n.className = "name"; n.textContent = x.id;
         var s = document.createElement("div"); s.className = "sub"; s.textContent = fmtWhen(x.at); left.appendChild(n); left.appendChild(s);

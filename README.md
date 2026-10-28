@@ -64,3 +64,5 @@ Do not commit real batch, product or lot data to this public repo. Test with mad
 Open the site in Safari (iPhone) or Chrome (Android), then Share > Add to Home Screen (iPhone) or Install app (Android).
 
 - 2026-10-27: Material requests now use a free-text 'Materials requested' box (500 characters, required) instead of the item dropdown; the puller sees the text and gets a beep, vibration and message when a new request arrives while the app is open (a flashing tab title if it is in the background). Script limit raised to 500 (redeploy needed). Cache v10. Not pushed.
+
+- 2026-10-28: Admin page shows only the last 5 sign-ins (script sends 5 rows; optional redeploy). Hosting decision: staying on public GitHub Pages for now (option 1); alternatives are Cloudflare Pages + Access, company IT hosting. Badge ID roster (20 four-digit IDs, 11 assigned) kept outside the repo. Cache v11.
