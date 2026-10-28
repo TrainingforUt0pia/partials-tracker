@@ -28,12 +28,12 @@ var REPORT_HOUR = 6;                    // the report period the app offers firs
 var MAX_REPORTS_PER_DAY = 20;           // report emails one day
 
 var TABS = {
-  requests: { name: "Requests", dateCols: ["B", "G"], headers: ["id", "requestedAt", "personId", "name", "item", "status", "deliveredAt", "deliveredById", "deliveredBy", "waitSeconds", "device"] },
-  people:   { name: "People", dateCols: ["F", "H", "J"], headers: ["personId", "name", "role", "pinHash", "status", "createdAt", "createdBy", "lastSignIn", "ackVersion", "ackAt"] },
-  acks:     { name: "Acknowledgments", dateCols: ["B"], headers: ["ackId", "signedAt", "personId", "registeredName", "typedName", "nameMatches", "role", "letterVersion", "letterHash", "device", "signatureFile", "method"] },
-  entries:  { name: "Entries", dateCols: ["B", "L"], textCols: ["F"], headers: ["entryId", "savedAt", "personId", "registeredName", "typedName", "date", "shift", "done", "book", "target", "status", "removedAt", "device"] },
-  targets:  { name: "Targets", dateCols: ["C"], textCols: ["A"], headers: ["date", "target", "setAt", "setById", "setBy"] },
-  signins:  { name: "Sign-ins", dateCols: ["A"], headers: ["time", "personId", "result", "device"] },
+  requests: { name: "Requests", dateCols: ["B", "G"], textCols: ["A", "C", "H"], headers: ["id", "requestedAt", "personId", "name", "item", "status", "deliveredAt", "deliveredById", "deliveredBy", "waitSeconds", "device"] },
+  people:   { name: "People", dateCols: ["F", "H", "J"], textCols: ["A"], headers: ["personId", "name", "role", "pinHash", "status", "createdAt", "createdBy", "lastSignIn", "ackVersion", "ackAt"] },
+  acks:     { name: "Acknowledgments", dateCols: ["B"], textCols: ["A", "C"], headers: ["ackId", "signedAt", "personId", "registeredName", "typedName", "nameMatches", "role", "letterVersion", "letterHash", "device", "signatureFile", "method"] },
+  entries:  { name: "Entries", dateCols: ["B", "L"], textCols: ["A", "C", "F"], headers: ["entryId", "savedAt", "personId", "registeredName", "typedName", "date", "shift", "done", "book", "target", "status", "removedAt", "device"] },
+  targets:  { name: "Targets", dateCols: ["C"], textCols: ["A", "D"], headers: ["date", "target", "setAt", "setById", "setBy"] },
+  signins:  { name: "Sign-ins", dateCols: ["A"], textCols: ["B"], headers: ["time", "personId", "result", "device"] },
   letter:   { name: "Letter" }
 };
 
@@ -145,8 +145,17 @@ function tab(key) {
       (def.textCols || []).forEach(function (c) { sh.getRange(c + ":" + c).setNumberFormat("@"); });
     }
   }
+  // tabs made by an earlier version: mark the ID columns as text once (an all-digit ID like 2614 would otherwise be stored as a number)
+  var props = PropertiesService.getScriptProperties();
+  if (def.textCols && props.getProperty("textfmt:" + key) !== "1") {
+    def.textCols.forEach(function (c) { sh.getRange(c + ":" + c).setNumberFormat("@"); });
+    props.setProperty("textfmt:" + key, "1");
+  }
   return sh;
 }
+
+// an ID read back from the Sheet is always compared as text, whatever the Sheet stored
+function str(v) { return v == null ? "" : String(v); }
 
 function pepper() {
   var props = PropertiesService.getScriptProperties(), p = props.getProperty("PEPPER");
@@ -178,7 +187,7 @@ function readPeople() {
   var sh = tab("people"), n = sh.getLastRow();
   if (n < 2) return [];
   return sh.getRange(2, 1, n - 1, 10).getValues().map(function (r, i) {
-    return { row: i + 2, id: r[P.id], name: r[P.name], role: r[P.role], hash: r[P.hash], status: r[P.status], created: ms(r[P.created]), last: ms(r[P.last]), ackVersion: r[P.ackV], ackAt: ms(r[P.ackAt]) };
+    return { row: i + 2, id: str(r[P.id]), name: r[P.name], role: r[P.role], hash: r[P.hash], status: r[P.status], created: ms(r[P.created]), last: ms(r[P.last]), ackVersion: r[P.ackV], ackAt: ms(r[P.ackAt]) };
   });
 }
 
@@ -395,7 +404,7 @@ function recentRows(sh) {
 var R = { id: 0, at: 1, pid: 2, name: 3, item: 4, status: 5, done: 6, byId: 7, by: 8, wait: 9, device: 10 };
 
 function toObj(r) {
-  return { id: r[R.id], at: ms(r[R.at]), pid: r[R.pid], name: r[R.name], item: r[R.item], status: r[R.status], done: ms(r[R.done]), by: r[R.by] || "" };
+  return { id: str(r[R.id]), at: ms(r[R.at]), pid: str(r[R.pid]), name: r[R.name], item: r[R.item], status: r[R.status], done: ms(r[R.done]), by: r[R.by] || "" };
 }
 
 function mine(s) {
@@ -412,7 +421,7 @@ function addRequest(d, s) {
   if (st.hourCount >= MAX_REQUESTS_PER_HOUR) return { ok: false, error: "limit" };
   var sh = tab("requests"), rows = recentRows(sh).rows;
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i][R.status] === "open" && rows[i][R.pid] === s.id) return { ok: false, error: "open" };
+    if (rows[i][R.status] === "open" && str(rows[i][R.pid]) === s.id) return { ok: false, error: "open" };
   }
   st.hourCount++;
   props.setProperty("reqrate", JSON.stringify(st));
@@ -424,14 +433,14 @@ function addRequest(d, s) {
 function findRequest(sh, id) {
   var r = recentRows(sh);
   for (var i = 0; i < r.rows.length; i++) {
-    if (r.rows[i][R.id] === id) return { row: r.start + i, values: r.rows[i] };
+    if (str(r.rows[i][R.id]) === id) return { row: r.start + i, values: r.rows[i] };
   }
   return null;
 }
 
 function cancelRequest(d, s) {
   var sh = tab("requests"), hit = findRequest(sh, String(d.id || ""));
-  if (!hit || hit.values[R.pid] !== s.id || hit.values[R.status] !== "open") return { ok: false, error: "closed" };
+  if (!hit || str(hit.values[R.pid]) !== s.id || hit.values[R.status] !== "open") return { ok: false, error: "closed" };
   sh.getRange(hit.row, R.status + 1).setValue("cancelled");
   return { ok: true };
 }
@@ -454,7 +463,7 @@ function openRequests() {
 function deliver(d, s) {
   var sh = tab("requests"), hit = findRequest(sh, String(d.id || ""));
   if (!hit || hit.values[R.status] !== "open") return { ok: false, error: "closed" };
-  if (hit.values[R.pid] === s.id) return { ok: false, error: "same" };      // nobody can deliver their own request
+  if (str(hit.values[R.pid]) === s.id) return { ok: false, error: "same" };      // nobody can deliver their own request
   var now = Date.now();
   sh.getRange(hit.row, R.status + 1, 1, 5).setValues([["delivered", new Date(now), s.id, s.name, Math.round((now - ms(hit.values[R.at])) / 1000)]]);
   return { ok: true };
@@ -473,7 +482,7 @@ function recentSignins() {
   var sh = tab("signins"), n = sh.getLastRow();
   if (n < 2) return { ok: true, list: [] };
   var start = Math.max(2, n - 4);
-  var list = sh.getRange(start, 1, n - start + 1, 4).getValues().map(function (r) { return { at: ms(r[0]), id: r[1], result: r[2] }; }).reverse();
+  var list = sh.getRange(start, 1, n - start + 1, 4).getValues().map(function (r) { return { at: ms(r[0]), id: str(r[1]), result: r[2] }; }).reverse();
   return { ok: true, list: list };
 }
 
@@ -528,9 +537,9 @@ function saveEntry(d, s) {
   if (!/^[a-z0-9]{6,24}$/.test(id) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || ["Day", "Evening", "Night"].indexOf(shift) < 0 ||
       done === null || isNaN(done) || isNaN(book)) return { ok: false, error: "invalid" };
   var sh = tab("entries"), recent = lastRows(sh, 2000, TABS.entries.headers.length), target = targetOn(date);
-  for (var i = 0; i < recent.rows.length; i++) if (recent.rows[i][E.id] === id) return { ok: true, duplicate: true };
+  for (var i = 0; i < recent.rows.length; i++) if (str(recent.rows[i][E.id]) === id) return { ok: true, duplicate: true };
   var day = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
-  var today = recent.rows.filter(function (r) { return r[E.pid] === s.id && Utilities.formatDate(new Date(ms(r[E.at])), Session.getScriptTimeZone(), "yyyy-MM-dd") === day; }).length;
+  var today = recent.rows.filter(function (r) { return str(r[E.pid]) === s.id && Utilities.formatDate(new Date(ms(r[E.at])), Session.getScriptTimeZone(), "yyyy-MM-dd") === day; }).length;
   if (today >= MAX_ENTRIES_PER_DAY) return { ok: false, error: "limit" };
   sh.appendRow([id, new Date(), s.id, s.name, clean(d.name, 60), date, shift, done, book === null ? "" : book, target === null ? "" : target, "active", "", validDevice(d.device) ? d.device : ""]);
   return { ok: true };
@@ -566,8 +575,8 @@ function removeEntry(d, s) {
   var sh = tab("entries"), recent = lastRows(sh, 2000, TABS.entries.headers.length);
   for (var i = 0; i < recent.rows.length; i++) {
     var r = recent.rows[i];
-    if (r[E.id] !== id) continue;
-    if (r[E.pid] !== s.id && s.role !== "supervisor") return { ok: false, error: "role" };
+    if (str(r[E.id]) !== id) continue;
+    if (str(r[E.pid]) !== s.id && s.role !== "supervisor") return { ok: false, error: "role" };
     if (r[E.status] !== "removed") {
       sh.getRange(recent.start + i, E.status + 1).setValue("removed");
       sh.getRange(recent.start + i, E.removedAt + 1).setValue(new Date());
@@ -607,7 +616,7 @@ function reportData(w) {
     if (!inWindow(ms(r[E.at]), w)) return;
     if (r[E.status] === "removed") { removed++; return; }
     var date = r[E.date] instanceof Date ? Utilities.formatDate(r[E.date], tz, "yyyy-MM-dd") : String(r[E.date]);
-    entries.push({ at: ms(r[E.at]), pid: r[E.pid], name: r[E.name], typed: r[E.typed], date: date, shift: r[E.shift], done: Number(r[E.done]) || 0,
+    entries.push({ at: ms(r[E.at]), pid: str(r[E.pid]), name: r[E.name], typed: r[E.typed], date: date, shift: r[E.shift], done: Number(r[E.done]) || 0,
       book: r[E.book] === "" ? null : Number(r[E.book]), target: r[E.target] === "" ? null : Number(r[E.target]) });
   });
   entries.sort(function (a, b) { return a.at - b.at; });
@@ -709,7 +718,7 @@ function weeklyData(w) {
     var date = r[E.date] instanceof Date ? Utilities.formatDate(r[E.date], tz, "yyyy-MM-dd") : String(r[E.date]);
     var di = dayKeys.indexOf(date);
     if (di < 0) return;
-    var g = byPerson[r[E.pid]] = byPerson[r[E.pid]] || { name: r[E.name], entries: 0, done: 0, perDay: [0, 0, 0, 0, 0, 0, 0], shifts: {} };
+    var g = byPerson[str(r[E.pid])] = byPerson[str(r[E.pid])] || { name: r[E.name], entries: 0, done: 0, perDay: [0, 0, 0, 0, 0, 0, 0], shifts: {} };
     var done = Number(r[E.done]) || 0, target = r[E.target] === "" ? null : Number(r[E.target]);
     g.entries++; g.done += done; g.perDay[di] += done;
     var key = date + "|" + r[E.shift];                                // one target per shift worked, however many entries it took
@@ -797,7 +806,7 @@ function monthlyData(w) {
     if (date.slice(0, 7) !== month || !g) return;
     var done = Number(r[E.done]) || 0, target = r[E.target] === "" ? null : Number(r[E.target]);
     g.entries++; g.done += done;
-    var key = r[E.pid] + "|" + date;
+    var key = str(r[E.pid]) + "|" + date;
     var sx = g.shifts[key] = g.shifts[key] || { t: 0, d: 0 };
     sx.t = Math.max(sx.t, target || 0); sx.d += done;
     parts[Math.min(parts.length - 1, Math.floor((Number(date.slice(8)) - 1) / 7))].done[r[E.shift]] += done;

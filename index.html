@@ -210,16 +210,27 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     </div>
   </section>
 
+  <section class="card a-only" aria-labelledby="atH">
+    <h2 id="atH">Daily target</h2>
+    <p class="note">The number of partials each weigher is measured against per shift. It applies to the chosen date and every later date until you change it.</p>
+    <div class="grid">
+      <label>Date <input type="date" id="atDate"></label>
+      <label>Target per shift <input type="number" id="atValue" inputmode="numeric" min="1" step="1" placeholder="e.g. 400"></label>
+    </div>
+    <button class="bigbtn" id="atSet" type="button" style="margin-top:10px">Set target</button>
+    <p class="note" id="atNote"></p>
+  </section>
+
   <section class="card a-only" aria-labelledby="rpH">
     <h2 id="rpH">Send report</h2>
-    <p class="note">Emails an Excel workbook of the chosen period (weighed counts, material requests, sign-ins) to the supervisors.</p>
+    <p class="note">Emails an Excel workbook of the chosen period (weighed counts, material requests, sign-ins) to the supervisors. A work day runs from 6:00 AM to 6:00 AM.</p>
     <div class="grid">
       <label>From <input type="datetime-local" id="repFrom"></label>
       <label>To <input type="datetime-local" id="repTo"></label>
     </div>
     <div class="grid" style="margin-top:8px">
-      <button type="button" class="ghost" id="repLast">Last 6 AM to 6 AM</button>
-      <button type="button" class="ghost" id="repToday">Since 6 AM until now</button>
+      <button type="button" class="ghost" id="repLast">Last full day</button>
+      <button type="button" class="ghost" id="repToday">Today so far</button>
     </div>
     <button class="bigbtn" id="repSend" type="button" style="margin-top:10px">Email report</button>
     <p class="msg" id="repMsg" role="status"></p>
@@ -430,7 +441,16 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   }
   function pctClass(p) { return p === null ? "none" : p >= 100 ? "good" : p >= 80 ? "warn" : "bad"; }
 
+  // the supervisor's target card on the Admin page
+  function renderAdminTarget() {
+    var d = $("atDate").value, t = d ? targetFor(d) : { value: null, from: null };
+    if (document.activeElement !== $("atValue")) $("atValue").value = d && state.targets[d] != null ? state.targets[d] : (t.value != null ? t.value : "");
+    $("atNote").textContent = !d ? "" : t.value == null ? "No target has been set for this date yet."
+      : state.targets[d] != null ? "Target for " + d + ": " + t.value.toLocaleString() + " per shift."
+      : "Target in force on " + d + ": " + t.value.toLocaleString() + " per shift (set on " + t.from + ").";
+  }
   function render() {
+    renderAdminTarget();
     var date = $("viewDate").value;
     var t = targetFor(date);
     $("target").value = state.targets[date] != null ? state.targets[date] : (t.value != null ? t.value : "");
@@ -946,6 +966,19 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   $("viewDate").value = today();
   $("viewDate").addEventListener("change", render);
 
+  $("atDate").value = today();
+  $("atDate").addEventListener("change", function () { $("atValue").value = ""; renderAdminTarget(); });
+  $("atSet").addEventListener("click", function () {
+    var v = num($("atValue").value), day = $("atDate").value, btn = $("atSet");
+    if (!day) { say("atNote", "Choose a date.", true); return; }
+    if (!v || v < 1) { say("atNote", "Enter a target above zero.", true); return; }
+    btn.disabled = true;
+    api({ action: "setTarget", date: day, value: v }).then(function (j) {
+      if (j && j.ok) { state.targets[day] = v; save(); render(); say("atNote", "Target saved for " + day + ". Everyone sees it now."); return; }
+      if (j && (j.error === "auth" || j.error === "ack")) return;
+      say("atNote", j && j.error === "role" ? "Only supervisors can set the target." : "The target was not saved. Try again.", true);
+    }).catch(function (e) { say("atNote", netMsg(e), true); }).then(function () { btn.disabled = false; });
+  });
   $("saveTarget").addEventListener("click", function () {
     var v = num($("target").value);
     if (!v || v < 1) { say("targetNote", "Enter a target above zero.", true); return; }
@@ -1244,6 +1277,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     box.appendChild(left); box.appendChild(big); box.appendChild(b); box.hidden = false;
   }
   function loadAdmin() {
+    loadTargets();
     api({ action: "people" }).then(function (j) {
       var box = $("people"); box.textContent = "";
       if (!j || !j.ok) { say("admMsg", "Could not load the list.", true); return; }

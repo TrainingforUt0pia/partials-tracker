@@ -1,6 +1,6 @@
 ﻿// Caches the app so it opens with no signal. Online it always tries the network first, so updates arrive on the next open.
 // Only this site's own files are handled here; calls to the Google script are left alone.
-var CACHE = "partials-v14";
+var CACHE = "partials-v16";
 var FILES = ["./", "./index.html", "./handoff-config.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", function (e) {
