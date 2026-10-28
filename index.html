@@ -210,6 +210,21 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     </div>
   </section>
 
+  <section class="card a-only" aria-labelledby="rpH">
+    <h2 id="rpH">Send report</h2>
+    <p class="note">Emails an Excel workbook of the chosen period (weighed counts, material requests, sign-ins) to the supervisors.</p>
+    <div class="grid">
+      <label>From <input type="datetime-local" id="repFrom"></label>
+      <label>To <input type="datetime-local" id="repTo"></label>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <button type="button" class="ghost" id="repLast">Last 6 AM to 6 AM</button>
+      <button type="button" class="ghost" id="repToday">Since 6 AM until now</button>
+    </div>
+    <button class="bigbtn" id="repSend" type="button" style="margin-top:10px">Email report</button>
+    <p class="msg" id="repMsg" role="status"></p>
+  </section>
+
   <section class="card a-only" aria-labelledby="sgH">
     <h2 id="sgH">Last 5 sign-ins</h2>
     <div class="rows" id="signins"></div>
@@ -246,7 +261,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
 
   <section class="card w-only" aria-labelledby="tgtH">
     <h2 id="tgtH">Required partials for this day</h2>
-    <div class="target-row">
+    <div class="target-row" id="targetRow">
       <label>Target per shift
         <input type="number" id="target" inputmode="numeric" min="1" step="1" placeholder="e.g. 400">
       </label>
@@ -375,7 +390,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       </label>
       <button class="small" id="restoreGo" type="button">Restore</button>
     </div>
-    <p class="note">Kept on this phone only until you sign out, then erased. The pick report is kept in memory only and is gone when you sign out or close the app. Export to Excel first if you need a copy.</p>
+    <p class="note">Weighing entries are also saved to the company record for the daily report. Everything on this phone is erased when you sign out. The pick report is kept in memory only and is gone when you sign out or close the app. Export to Excel first if you need a copy.</p>
     <p class="msg" id="dataMsg" role="status"></p>
   </section>
 </main>
@@ -388,6 +403,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   function normalize(s) {
     s.batches = []; s.currentBatch = null;      // the pick report is never kept on the phone, only in memory
     s.requests = s.requests || [];
+    s.removals = s.removals || [];
     s.lastName = s.lastName || ""; s.handoffs = s.handoffs || []; s.handoffDraft = s.handoffDraft || "";
     (s.entries || []).forEach(function (e) { delete e.lot; delete e.batchName; });
     (s.handoffs || []).forEach(function (h) { delete h.lot; delete h.batchName; });
@@ -418,7 +434,10 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     var date = $("viewDate").value;
     var t = targetFor(date);
     $("target").value = state.targets[date] != null ? state.targets[date] : (t.value != null ? t.value : "");
-    $("targetNote").textContent = t.value == null ? "No target set yet. Enter one and press Set."
+    var boss = !!session && session.role === "supervisor";
+    $("targetRow").hidden = !boss;
+    $("targetNote").textContent = !boss ? (t.value == null ? "No target has been set. A supervisor sets it." : "Target: " + t.value.toLocaleString() + " per shift. Only supervisors can change it.")
+      : t.value == null ? "No target set yet. Enter one and press Set."
       : state.targets[date] != null ? "Target set for this date."
       : "Carried over from " + t.from + ". Press Set to change it for this date onward.";
 
@@ -443,7 +462,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       var bar = document.createElement("div"); bar.className = "bar"; var fill = document.createElement("i"); fill.style.width = Math.min(100, p || 0) + "%"; bar.appendChild(fill);
       var del = document.createElement("button"); del.className = "ghost small"; del.textContent = "Remove"; del.style.gridColumn = "1 / -1";
       del.onclick = function () {
-        if (del.dataset.armed) { state.entries = state.entries.filter(function (x) { return x.id !== e.id; }); save(); render(); }
+        if (del.dataset.armed) { state.entries = state.entries.filter(function (x) { return x.id !== e.id; }); if (e.synced) state.removals.push(e.id); save(); render(); syncEntries(); }
         else { del.dataset.armed = "1"; del.textContent = "Tap again to confirm"; setTimeout(function () { del.dataset.armed = ""; del.textContent = "Remove"; }, 3000); }
       };
       r.appendChild(left); r.appendChild(pc); r.appendChild(bar); r.appendChild(del);
@@ -652,6 +671,35 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
 
   function pullerName() { return session ? session.name : ""; }
 
+  // weighing entries are also stored in the Google Sheet so the daily report can use them; whatever could not be sent waits here
+  // targets come from the Sheet; only supervisors can set them
+  function loadTargets() {
+    if (!session || ["weigher", "supervisor"].indexOf(session.role) < 0 || !configured()) return Promise.resolve();
+    return api({ action: "targets" }).then(function (j) { if (j && j.ok) { state.targets = j.targets; save(); render(); } }).catch(function () {});
+  }
+  var syncing = false;
+  function syncEntries() {
+    if (!session || syncing || !configured() || ["weigher", "supervisor"].indexOf(session.role) < 0) return Promise.resolve();
+    var todo = state.entries.filter(function (e) { return !e.synced; }), gone = state.removals.slice();
+    if (!todo.length && !gone.length) return Promise.resolve();
+    syncing = true;
+    var chain = Promise.resolve();
+    todo.forEach(function (e) {
+      chain = chain.then(function () {
+        return api({ action: "saveEntry", id: e.id, name: e.name, date: e.date, shift: e.shift, done: e.done, book: e.book, target: e.target === undefined ? null : e.target, device: DEVICE }).then(function (j) {
+          if (j && (j.ok || j.error === "invalid")) { e.synced = true; save(); }      // an entry the server can never accept is not retried
+        });
+      });
+    });
+    gone.forEach(function (id) {
+      chain = chain.then(function () {
+        return api({ action: "removeEntry", id: id }).then(function (j) {
+          if (j && (j.ok || j.error === "invalid" || j.error === "role")) { state.removals = state.removals.filter(function (x) { return x !== id; }); save(); }
+        });
+      });
+    });
+    return chain.catch(function () {}).then(function () { syncing = false; render(); });
+  }
   function refreshMine() {
     if (!session || ["weigher", "supervisor"].indexOf(session.role) < 0) return Promise.resolve();
     return api({ action: "mine", device: DEVICE }).then(function (j) {
@@ -699,15 +747,16 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   // phones only ask the script for news while they are looking at the screen and something is waiting
   var syncStarted = false;
   function startSync() {
-    refreshMine(); refreshOpen();
+    refreshMine(); refreshOpen(); syncEntries(); loadTargets();
     if (syncStarted) return;
     syncStarted = true;
     setInterval(function () {
       if (document.hidden || !session) return;
       if (document.body.getAttribute("data-role") === "puller") refreshOpen();
       else if (cloud.some(function (r) { return r.status === "open"; })) refreshMine();
+      syncEntries();
     }, 10000);
-    document.addEventListener("visibilitychange", function () { if (!document.hidden && session) { refreshMine(); refreshOpen(); } });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden && session) { refreshMine(); refreshOpen(); syncEntries(); loadTargets(); } });
   }
 
   function renderRequests() {
@@ -900,16 +949,22 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   $("saveTarget").addEventListener("click", function () {
     var v = num($("target").value);
     if (!v || v < 1) { say("targetNote", "Enter a target above zero.", true); return; }
-    state.targets[$("viewDate").value] = v; save(); render();
+    var day = $("viewDate").value, btn = $("saveTarget"); btn.disabled = true;
+    api({ action: "setTarget", date: day, value: v }).then(function (j) {
+      if (j && j.ok) { state.targets[day] = v; save(); render(); say("targetNote", "Target saved for the team."); return; }
+      if (j && (j.error === "auth" || j.error === "ack")) return;
+      say("targetNote", j && j.error === "role" ? "Only supervisors can set the target." : "The target was not saved. Try again.", true);
+    }).catch(function (e) { say("targetNote", netMsg(e), true); }).then(function () { btn.disabled = false; });
   });
 
   $("entry").addEventListener("submit", function (ev) {
     ev.preventDefault();
     var name = $("name").value.trim(), done = num($("done").value), book = num($("book").value);
     if (!name || done === null || done < 0) { say("msg", "Enter a name and the partials weighed.", true); return; }
-    state.entries.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), date: $("viewDate").value, shift: $("shift").value, name: name, done: done, book: book });
+    state.entries.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), date: $("viewDate").value, shift: $("shift").value, name: name, done: done, book: book, target: targetFor($("viewDate").value).value, synced: false });
     state.lastName = name; $("reqName").value = name;
     save(); $("done").value = ""; $("book").value = ""; render(); say("msg", "Saved.");
+    syncEntries();
   });
 
   var HEAD = ["Date", "Shift", "Weigher", "Partials weighed", "Partials in batch", "Target", "Completion %"];
@@ -1107,8 +1162,9 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
   $("signOut").addEventListener("click", function () {
     var b = $("signOut");
     if (b.dataset.armed) { endSession("You are signed out. This phone's data was erased."); return; }
-    var unsent = state.handoffs.some(function (h) { return !h.sent; });
-    b.dataset.armed = "1"; b.textContent = unsent ? "Unsent handoff will be erased. Tap again" : "Tap again to erase and sign out";
+    syncEntries();
+    var unsent = state.handoffs.some(function (h) { return !h.sent; }) || state.entries.some(function (e) { return !e.synced; });
+    b.dataset.armed = "1"; b.textContent = unsent ? "Unsent items will be erased. Tap again" : "Tap again to erase and sign out";
     clearTimeout(soTimer); soTimer = setTimeout(function () { b.dataset.armed = ""; b.textContent = "Sign out"; }, 4000);
   });
 
@@ -1222,6 +1278,25 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       });
     }).catch(function () {});
   }
+  // ---- report by email: the supervisor picks the period, the script builds the workbook and sends it
+  function localStamp(d) { var x = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return x.toISOString().slice(0, 16); }
+  function setPeriod(from, to) { $("repFrom").value = localStamp(from); $("repTo").value = localStamp(to); }
+  function lastFinished() { var end = new Date(); end.setHours(6, 0, 0, 0); if (end.getTime() > Date.now()) end.setDate(end.getDate() - 1); var st = new Date(end.getTime()); st.setDate(st.getDate() - 1); setPeriod(st, end); }
+  $("repLast").addEventListener("click", lastFinished);
+  $("repToday").addEventListener("click", function () { var st = new Date(); st.setHours(6, 0, 0, 0); if (st.getTime() > Date.now()) st.setDate(st.getDate() - 1); setPeriod(st, new Date()); });
+  lastFinished();
+  armed($("repSend"), "Email report", function () {
+    var from = new Date($("repFrom").value).getTime(), to = new Date($("repTo").value).getTime();
+    if (!isFinite(from) || !isFinite(to) || to <= from) { say("repMsg", "Choose a start that is before the end.", true); return; }
+    var b = $("repSend"); b.dataset.armed = ""; b.disabled = true; b.textContent = "Building and sending...";
+    api({ action: "sendReport", from: from, to: to }).then(function (j) {
+      if (j && j.ok) { say("repMsg", "Report emailed: " + j.weighed.toLocaleString() + " partials weighed, " + j.requests + " material requests."); return; }
+      if (j && (j.error === "auth" || j.error === "ack")) return;
+      var errs = { range: "Choose a period of up to 7 days that has already started.", limit: "Too many reports today. Try again tomorrow.", role: "Only supervisors can send reports." };
+      say("repMsg", errs[j && j.error] || "The report was not sent. Try again.", true);
+    }).catch(function (e) { say("repMsg", netMsg(e), true); }).then(function () { b.disabled = false; b.textContent = "Email report"; });
+  });
+
   $("addPerson").addEventListener("submit", function (ev) {
     ev.preventDefault();
     api({ action: "addPerson", id: $("apId").value.trim(), name: $("apName").value.trim(), role: $("apRole").value }).then(function (j) {

@@ -23,11 +23,16 @@ var LOCK_MINUTES = 15;
 var MAX_HANDOFF_PER_HOUR = 10;
 var MAX_HANDOFF_PER_DAY = 40;
 var MAX_REQUESTS_PER_HOUR = 120;
+var MAX_ENTRIES_PER_DAY = 200;          // weighing entries one person can save in a day
+var REPORT_HOUR = 6;                    // the report period the app offers first runs from this hour to the same hour next day
+var MAX_REPORTS_PER_DAY = 20;           // report emails one day
 
 var TABS = {
   requests: { name: "Requests", dateCols: ["B", "G"], headers: ["id", "requestedAt", "personId", "name", "item", "status", "deliveredAt", "deliveredById", "deliveredBy", "waitSeconds", "device"] },
   people:   { name: "People", dateCols: ["F", "H", "J"], headers: ["personId", "name", "role", "pinHash", "status", "createdAt", "createdBy", "lastSignIn", "ackVersion", "ackAt"] },
   acks:     { name: "Acknowledgments", dateCols: ["B"], headers: ["ackId", "signedAt", "personId", "registeredName", "typedName", "nameMatches", "role", "letterVersion", "letterHash", "device", "signatureFile", "method"] },
+  entries:  { name: "Entries", dateCols: ["B", "L"], textCols: ["F"], headers: ["entryId", "savedAt", "personId", "registeredName", "typedName", "date", "shift", "done", "book", "target", "status", "removedAt", "device"] },
+  targets:  { name: "Targets", dateCols: ["C"], textCols: ["A"], headers: ["date", "target", "setAt", "setById", "setBy"] },
   signins:  { name: "Sign-ins", dateCols: ["A"], headers: ["time", "personId", "result", "device"] },
   letter:   { name: "Letter" }
 };
@@ -56,7 +61,7 @@ var LETTER_DRAFT = [
 
 function setup() {
   var ss = spreadsheet();
-  tab("requests"); tab("people"); tab("acks"); tab("signins");
+  tab("requests"); tab("people"); tab("acks"); tab("signins"); tab("entries"); tab("targets");
   var lt = tab("letter");
   if (lt.getLastRow() === 0) seedLetter(lt);
   var s1 = ss.getSheetByName("Sheet1");
@@ -137,6 +142,7 @@ function tab(key) {
       sh.setFrozenRows(1);
       sh.getRange(1, 1, 1, def.headers.length).setFontWeight("bold");
       (def.dateCols || []).forEach(function (c) { sh.getRange(c + ":" + c).setNumberFormat("yyyy-mm-dd hh:mm:ss"); });
+      (def.textCols || []).forEach(function (c) { sh.getRange(c + ":" + c).setNumberFormat("@"); });
     }
   }
   return sh;
@@ -328,8 +334,10 @@ function route(a, d, s) {
   if (a === "mine") return can(s, WEIGHER) ? mine(s) : { ok: false, error: "role" };
   if (a === "open") return can(s, PULLER) ? openRequests() : { ok: false, error: "role" };
   if (a === "people") return can(s, ADMIN) ? listPeople() : { ok: false, error: "role" };
+  if (a === "targets") return can(s, WEIGHER) ? { ok: true, targets: targetMap() } : { ok: false, error: "role" };
   if (a === "signins") return can(s, ADMIN) ? recentSignins() : { ok: false, error: "role" };
-  var need = { request: WEIGHER, cancel: WEIGHER, handoff: WEIGHER, deliver: PULLER, addPerson: ADMIN, resetPin: ADMIN, setStatus: ADMIN };
+  if (a === "sendReport") return can(s, ADMIN) ? sendReport(d, s) : { ok: false, error: "role" };
+  var need = { request: WEIGHER, cancel: WEIGHER, handoff: WEIGHER, saveEntry: WEIGHER, removeEntry: WEIGHER, setTarget: ADMIN, deliver: PULLER, addPerson: ADMIN, resetPin: ADMIN, setStatus: ADMIN };
   if (!need[a]) return { ok: false, error: "action" };
   if (!can(s, need[a])) return { ok: false, error: "role" };
   var lock = LockService.getScriptLock();
@@ -339,6 +347,9 @@ function route(a, d, s) {
     if (a === "cancel") return cancelRequest(d, s);
     if (a === "deliver") return deliver(d, s);
     if (a === "handoff") return handoff(d, s);
+    if (a === "saveEntry") return saveEntry(d, s);
+    if (a === "setTarget") return setTarget(d, s);
+    if (a === "removeEntry") return removeEntry(d, s);
     if (a === "addPerson") return addPerson(d, s);
     if (a === "resetPin") return resetPin(d, s);
     if (a === "setStatus") return setStatus(d, s);
@@ -491,4 +502,460 @@ function setStatus(d, s) {
   tab("people").getRange(p.row, P.status + 1).setValue(status);
   if (status === "revoked") endSessions(p.id);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------- Weighed counts (stored so the daily report can use them)
+
+function intOrNull(v, max) {
+  if (v === "" || v == null) return null;
+  var n = Number(v);
+  return isFinite(n) && n >= 0 && n <= max && n % 1 === 0 ? n : NaN;
+}
+
+// the most recent rows of any tab, with the sheet row number of the first one
+function lastRows(sh, count, width) {
+  var last = sh.getLastRow();
+  if (last < 2) return { start: 2, rows: [] };
+  var start = Math.max(2, last - count + 1);
+  return { start: start, rows: sh.getRange(start, 1, last - start + 1, width).getValues() };
+}
+
+var E = { id: 0, at: 1, pid: 2, name: 3, typed: 4, date: 5, shift: 6, done: 7, book: 8, target: 9, status: 10, removedAt: 11, device: 12 };
+
+function saveEntry(d, s) {
+  var id = String(d.id || ""), date = String(d.date || ""), shift = String(d.shift || "");
+  var done = intOrNull(d.done, 1000000), book = intOrNull(d.book, 1000000);
+  if (!/^[a-z0-9]{6,24}$/.test(id) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || ["Day", "Evening", "Night"].indexOf(shift) < 0 ||
+      done === null || isNaN(done) || isNaN(book)) return { ok: false, error: "invalid" };
+  var sh = tab("entries"), recent = lastRows(sh, 2000, TABS.entries.headers.length), target = targetOn(date);
+  for (var i = 0; i < recent.rows.length; i++) if (recent.rows[i][E.id] === id) return { ok: true, duplicate: true };
+  var day = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var today = recent.rows.filter(function (r) { return r[E.pid] === s.id && Utilities.formatDate(new Date(ms(r[E.at])), Session.getScriptTimeZone(), "yyyy-MM-dd") === day; }).length;
+  if (today >= MAX_ENTRIES_PER_DAY) return { ok: false, error: "limit" };
+  sh.appendRow([id, new Date(), s.id, s.name, clean(d.name, 60), date, shift, done, book === null ? "" : book, target === null ? "" : target, "active", "", validDevice(d.device) ? d.device : ""]);
+  return { ok: true };
+}
+
+// ---- targets: only supervisors set them; the newest value on or before a date applies to that date
+function targetMap() {
+  var m = {}, tz = Session.getScriptTimeZone();
+  lastRows(tab("targets"), 400, TABS.targets.headers.length).rows.forEach(function (r) {
+    var d = r[0] instanceof Date ? Utilities.formatDate(r[0], tz, "yyyy-MM-dd") : String(r[0]), v = Number(r[1]);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && v > 0) m[d] = v;
+  });
+  return m;
+}
+
+function targetOn(date) {
+  var m = targetMap(), best = null;
+  Object.keys(m).forEach(function (k) { if (k <= date && (best === null || k > best)) best = k; });
+  return best === null ? null : m[best];
+}
+
+function setTarget(d, s) {
+  var date = String(d.date || ""), v = intOrNull(d.value, 1000000);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || v === null || isNaN(v) || v < 1) return { ok: false, error: "invalid" };
+  tab("targets").appendRow([date, v, new Date(), s.id, s.name]);
+  return { ok: true };
+}
+
+// a removed entry stays in the sheet marked "removed", so nothing disappears from the record
+function removeEntry(d, s) {
+  var id = String(d.id || "");
+  if (!/^[a-z0-9]{6,24}$/.test(id)) return { ok: false, error: "invalid" };
+  var sh = tab("entries"), recent = lastRows(sh, 2000, TABS.entries.headers.length);
+  for (var i = 0; i < recent.rows.length; i++) {
+    var r = recent.rows[i];
+    if (r[E.id] !== id) continue;
+    if (r[E.pid] !== s.id && s.role !== "supervisor") return { ok: false, error: "role" };
+    if (r[E.status] !== "removed") {
+      sh.getRange(recent.start + i, E.status + 1).setValue("removed");
+      sh.getRange(recent.start + i, E.removedAt + 1).setValue(new Date());
+    }
+    return { ok: true };
+  }
+  return { ok: true };       // it never reached the server, so there is nothing to mark
+}
+
+// ---------------------------------------------------------------- Daily report (formatted Excel workbook by email)
+
+// the default report period: the 24 hours that ended at the most recent REPORT_HOUR o'clock (script time zone)
+function reportWindow(now) {
+  var end = new Date(now.getTime());
+  end.setHours(REPORT_HOUR, 0, 0, 0);
+  if (end.getTime() > now.getTime()) end.setDate(end.getDate() - 1);
+  var start = new Date(end.getTime());
+  start.setDate(start.getDate() - 1);
+  return { start: start, end: end };
+}
+
+function inWindow(t, w) { return t !== null && t >= w.start.getTime() && t < w.end.getTime(); }
+function sec2clock(s) { s = Math.round(s); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+// text the sheet could read as a formula is stored as plain text
+function safe(v) { return typeof v === "string" && /^[=+\-@]/.test(v) ? "'" + v : v; }
+function rowsOf(key) {
+  var v = tab(key).getDataRange().getValues();
+  v.shift();
+  return v;
+}
+
+// everything in the window, gathered and totalled; no formatting here so it can be tested on its own
+function reportData(w) {
+  var tz = Session.getScriptTimeZone();
+  var entries = [], removed = 0;
+  rowsOf("entries").forEach(function (r) {
+    if (!inWindow(ms(r[E.at]), w)) return;
+    if (r[E.status] === "removed") { removed++; return; }
+    var date = r[E.date] instanceof Date ? Utilities.formatDate(r[E.date], tz, "yyyy-MM-dd") : String(r[E.date]);
+    entries.push({ at: ms(r[E.at]), pid: r[E.pid], name: r[E.name], typed: r[E.typed], date: date, shift: r[E.shift], done: Number(r[E.done]) || 0,
+      book: r[E.book] === "" ? null : Number(r[E.book]), target: r[E.target] === "" ? null : Number(r[E.target]) });
+  });
+  entries.sort(function (a, b) { return a.at - b.at; });
+
+  var reqs = [];
+  rowsOf("requests").forEach(function (r) {
+    var at = ms(r[R.at]);
+    if (!inWindow(at, w)) return;
+    var done = ms(r[R.done]);
+    reqs.push({ at: at, name: r[R.name], item: r[R.item], status: r[R.status], done: done, by: r[R.by] || "", wait: r[R.status] === "delivered" && done ? Math.round((done - at) / 1000) : null });
+  });
+  reqs.sort(function (a, b) { return a.at - b.at; });
+
+  var logins = [];
+  rowsOf("signins").forEach(function (r) {
+    var at = ms(r[0]);
+    if (inWindow(at, w)) logins.push({ at: at, id: r[1], result: r[2] });
+  });
+
+  var byWeigher = {};
+  entries.forEach(function (e) {
+    var g = byWeigher[e.pid] = byWeigher[e.pid] || { name: e.name, entries: 0, done: 0, target: null };
+    g.entries++; g.done += e.done;
+    if (e.target !== null) g.target = Math.max(g.target || 0, e.target);
+  });
+  var weighers = Object.keys(byWeigher).map(function (k) { var g = byWeigher[k]; g.pct = g.target ? g.done / g.target : null; return g; })
+    .sort(function (a, b) { return b.done - a.done; });
+
+  var byPuller = {};
+  reqs.filter(function (q) { return q.status === "delivered" && q.wait !== null; }).forEach(function (q) {
+    var g = byPuller[q.by] = byPuller[q.by] || { name: q.by, count: 0, total: 0, max: 0 };
+    g.count++; g.total += q.wait; g.max = Math.max(g.max, q.wait);
+  });
+  var pullers = Object.keys(byPuller).map(function (k) { var g = byPuller[k]; g.avg = g.total / g.count; return g; })
+    .sort(function (a, b) { return b.count - a.count; });
+
+  var waits = reqs.filter(function (q) { return q.wait !== null; }).map(function (q) { return q.wait; });
+  return {
+    entries: entries, removed: removed, reqs: reqs, logins: logins, weighers: weighers, pullers: pullers,
+    totalDone: entries.reduce(function (a, e) { return a + e.done; }, 0),
+    delivered: waits.length,
+    cancelled: reqs.filter(function (q) { return q.status === "cancelled"; }).length,
+    stillOpen: reqs.filter(function (q) { return q.status === "open"; }).length,
+    avgWait: waits.length ? waits.reduce(function (a, c) { return a + c; }, 0) / waits.length : null,
+    maxWait: waits.length ? Math.max.apply(null, waits) : null,
+    signedIn: logins.filter(function (l) { return l.result === "signed in"; }).length,
+    failedIn: logins.filter(function (l) { return l.result !== "signed in"; }).length
+  };
+}
+
+var NAVY = "#1f6fa8", PALE = "#eaf3fa", GRID = "#d5dde5";
+
+// header row + body rows in one call each, with banding and borders
+function paintTable(sh, row, headers, body, formats) {
+  var n = headers.length;
+  var head = sh.getRange(row, 1, 1, n);
+  head.setValues([headers]).setBackground(NAVY).setFontColor("#ffffff").setFontWeight("bold").setVerticalAlignment("middle").setWrap(true);
+  if (body.length) {
+    var rng = sh.getRange(row + 1, 1, body.length, n);
+    rng.setValues(body.map(function (r) { return r.map(safe); })).setVerticalAlignment("middle");
+    for (var i = 1; i < body.length; i += 2) sh.getRange(row + 1 + i, 1, 1, n).setBackground(PALE);
+    (formats || []).forEach(function (f, c) { if (f) sh.getRange(row + 1, c + 1, body.length, 1).setNumberFormat(f); });
+    rng.setBorder(true, true, true, true, true, true, GRID, SpreadsheetApp.BorderStyle.SOLID);
+  }
+  head.setBorder(true, true, true, true, true, true, GRID, SpreadsheetApp.BorderStyle.SOLID);
+  sh.setRowHeight(row, 30);
+}
+
+function titleBand(sh, cols, title, sub) {
+  sh.getRange(1, 1, 1, cols).setBackground(NAVY);
+  sh.getRange(1, 1).setValue(title).setFontSize(18).setFontWeight("bold").setFontColor("#ffffff");
+  sh.getRange(2, 1, 1, cols).setBackground(NAVY);
+  sh.getRange(2, 1).setValue(sub).setFontColor("#dbeafe");
+  sh.setRowHeight(1, 36);
+}
+
+function pctColor(p) { return p === null ? null : p >= 1 ? "#e5f4e4" : p >= 0.8 ? "#f9eeda" : "#fbebeb"; }
+
+// ---- weekly comparison: Monday to Sunday of the week the report period ends in, week to date
+function ymdParts(s) { var p = s.split("-"); return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0); }
+
+function weeklyData(w) {
+  var tz = Session.getScriptTimeZone();
+  // the work day a moment belongs to starts at REPORT_HOUR, so 3 AM Wednesday still counts as Tuesday
+  var ref = new Date(w.end.getTime() - 1 - REPORT_HOUR * 3600000);
+  var refDay = Utilities.formatDate(ref, tz, "yyyy-MM-dd");
+  var back = Number(Utilities.formatDate(ref, tz, "u")) - 1;       // 1 = Monday ... 7 = Sunday
+  var monday = ymdParts(refDay); monday.setDate(monday.getDate() - back);
+  var days = [], dayKeys = [];
+  for (var i = 0; i < 7; i++) {
+    var d = new Date(monday.getTime()); d.setDate(d.getDate() + i);
+    days.push(Utilities.formatDate(d, tz, "EEE d MMM")); dayKeys.push(Utilities.formatDate(d, tz, "yyyy-MM-dd"));
+  }
+  var byPerson = {};
+  rowsOf("entries").forEach(function (r) {
+    if (r[E.status] === "removed") return;
+    var at = ms(r[E.at]);
+    if (at === null || at >= w.end.getTime()) return;
+    var date = r[E.date] instanceof Date ? Utilities.formatDate(r[E.date], tz, "yyyy-MM-dd") : String(r[E.date]);
+    var di = dayKeys.indexOf(date);
+    if (di < 0) return;
+    var g = byPerson[r[E.pid]] = byPerson[r[E.pid]] || { name: r[E.name], entries: 0, done: 0, perDay: [0, 0, 0, 0, 0, 0, 0], shifts: {} };
+    var done = Number(r[E.done]) || 0, target = r[E.target] === "" ? null : Number(r[E.target]);
+    g.entries++; g.done += done; g.perDay[di] += done;
+    var key = date + "|" + r[E.shift];                                // one target per shift worked, however many entries it took
+    var sx = g.shifts[key] = g.shifts[key] || { t: 0, d: 0 };
+    sx.t = Math.max(sx.t, target || 0); sx.d += done;
+  });
+  var rows = Object.keys(byPerson).map(function (k) {
+    var g = byPerson[k], keys = Object.keys(g.shifts);
+    g.shiftCount = keys.length;
+    g.target = keys.reduce(function (a, x) { return a + g.shifts[x].t; }, 0);
+    g.doneT = keys.reduce(function (a, x) { return a + (g.shifts[x].t > 0 ? g.shifts[x].d : 0); }, 0);     // completion only counts shifts that had a target
+    g.avg = g.shiftCount ? g.done / g.shiftCount : null;
+    g.pct = g.target ? g.doneT / g.target : null;
+    return g;
+  }).sort(function (a, b) { return b.done - a.done; });
+  var total = rows.reduce(function (a, g) { return a + g.done; }, 0);
+  rows.forEach(function (g) { g.share = total ? g.done / total : null; g.vsAvg = rows.length ? g.done - total / rows.length : 0; });
+  var perDayTotals = [0, 0, 0, 0, 0, 0, 0];
+  rows.forEach(function (g) { g.perDay.forEach(function (v, i) { perDayTotals[i] += v; }); });
+  var shiftsAll = rows.reduce(function (a, g) { return a + g.shiftCount; }, 0), targetAll = rows.reduce(function (a, g) { return a + g.target; }, 0), doneTAll = rows.reduce(function (a, g) { return a + g.doneT; }, 0);
+  return { doneT: doneTAll, days: days, dayKeys: dayKeys, rows: rows, total: total, perDayTotals: perDayTotals, shiftsAll: shiftsAll, targetAll: targetAll,
+    entriesAll: rows.reduce(function (a, g) { return a + g.entries; }, 0), refDay: refDay, label: days[0] + "  to  " + days[6] };
+}
+
+function heat(v, max) {
+  if (!max || !v) return "#ffffff";
+  var f = Math.min(1, v / max), a = [255, 255, 255], b = [120, 176, 218];
+  return "#" + [0, 1, 2].map(function (i) { return ("0" + Math.round(a[i] + (b[i] - a[i]) * f).toString(16)).slice(-2); }).join("");
+}
+
+function paintWeekly(sh, wk, label) {
+  var n = wk.rows.length, avgText = n ? Math.round(wk.total / n).toLocaleString() : "0";
+  titleBand(sh, 11, "Weekly comparison by weigher", "Week " + wk.label + " (Monday to Sunday, week to date through the end of this report)");
+  sh.getRange(3, 1).setValue(n ? "Team total " + wk.total.toLocaleString() + " partials across " + n + " weighers. Team average per weigher: " + avgText + ". Ranked by partials weighed." : "No weighing entries this week yet.").setFontColor("#5b6b7a").setFontSize(9);
+
+  var body = wk.rows.map(function (g, i) { return [i + 1, g.name, g.shiftCount, g.entries, g.done, g.avg === null ? "" : g.avg, g.target || "", g.pct === null ? "" : g.pct, g.share === null ? "" : g.share, g.vsAvg]; });
+  if (n > 1) body.push(["", "Team", wk.shiftsAll, wk.entriesAll, wk.total, wk.shiftsAll ? wk.total / wk.shiftsAll : "", wk.targetAll || "", wk.targetAll ? wk.doneT / wk.targetAll : "", 1, ""]);
+  paintTable(sh, 5, ["Rank", "Weigher", "Shifts worked", "Entries", "Partials weighed", "Average per shift", "Target (all shifts)", "Completion", "Share of team", "Vs team average"],
+    body.length ? body : [["", "No entries this week", "", "", "", "", "", "", "", ""]], ["0", null, "0", "0", "#,##0", "#,##0", "#,##0", "0%", "0%", "+#,##0;-#,##0;0"]);
+  wk.rows.forEach(function (g, i) {
+    var c = pctColor(g.pct); if (c) sh.getRange(6 + i, 8).setBackground(c);
+    if (n > 1) sh.getRange(6 + i, 10).setBackground(g.vsAvg >= 0 ? "#e5f4e4" : "#fbebeb");
+  });
+  if (n > 1) sh.getRange(6 + n, 1, 1, 10).setFontWeight("bold").setBorder(true, null, null, null, null, null, NAVY, SpreadsheetApp.BorderStyle.SOLID);
+
+  var row = 6 + Math.max(body.length, 1) + 2;
+  sh.getRange(row, 1).setValue("Partials weighed by day").setFontWeight("bold").setFontSize(12).setFontColor(NAVY);
+  var max = 0; wk.rows.forEach(function (g) { g.perDay.forEach(function (v) { if (v > max) max = v; }); });
+  var dBody = wk.rows.map(function (g) { return [g.name].concat(g.perDay, [g.done]); });
+  if (n > 1) dBody.push(["Team"].concat(wk.perDayTotals, [wk.total]));
+  paintTable(sh, row + 1, ["Weigher"].concat(wk.days, ["Week"]), dBody.length ? dBody : [["No entries this week"].concat(["", "", "", "", "", "", "", ""])],
+    [null, "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0"]);
+  wk.rows.forEach(function (g, i) { g.perDay.forEach(function (v, j) { if (v) sh.getRange(row + 2 + i, 2 + j).setBackground(heat(v, max)); }); });
+  if (n > 1) sh.getRange(row + 2 + n, 1, 1, 9).setFontWeight("bold");
+
+  sh.setColumnWidth(1, 150); sh.setColumnWidth(2, 130);
+  for (var c = 3; c <= 10; c++) sh.setColumnWidth(c, 105);
+  if (n > 1) {
+    var chartRow = row + 2 + Math.max(dBody.length, 1) + 1;
+    sh.insertChart(sh.newChart().setChartType(Charts.ChartType.COLUMN).addRange(sh.getRange(5, 2, n + 1, 1)).addRange(sh.getRange(5, 5, n + 1, 1))
+      .setOption("title", "Partials weighed this week").setOption("legend", { position: "none" }).setOption("colors", [NAVY])
+      .setPosition(chartRow, 1, 0, 0).setOption("width", 640).setOption("height", 300).build());
+  }
+  sh.setFrozenRows(2);
+}
+
+// ---- monthly shift comparison: Day vs Evening vs Night, month to date through the end of this report
+var SHIFT_NAMES = ["Day", "Evening", "Night"];
+
+function monthlyData(w) {
+  var tz = Session.getScriptTimeZone();
+  var ref = new Date(w.end.getTime() - 1 - REPORT_HOUR * 3600000);
+  var refDay = Utilities.formatDate(ref, tz, "yyyy-MM-dd"), month = refDay.slice(0, 7);
+  var rd = ymdParts(refDay), last = new Date(rd.getFullYear(), rd.getMonth() + 1, 0).getDate();
+  var parts = [];
+  for (var s = 1; s <= last; s += 7) parts.push({ label: "Days " + s + "-" + Math.min(s + 6, last), done: { Day: 0, Evening: 0, Night: 0 } });
+  var by = {};
+  SHIFT_NAMES.forEach(function (n) { by[n] = { name: n, entries: 0, done: 0, shifts: {} }; });
+  rowsOf("entries").forEach(function (r) {
+    if (r[E.status] === "removed") return;
+    var at = ms(r[E.at]);
+    if (at === null || at >= w.end.getTime()) return;
+    var date = r[E.date] instanceof Date ? Utilities.formatDate(r[E.date], tz, "yyyy-MM-dd") : String(r[E.date]);
+    var g = by[r[E.shift]];
+    if (date.slice(0, 7) !== month || !g) return;
+    var done = Number(r[E.done]) || 0, target = r[E.target] === "" ? null : Number(r[E.target]);
+    g.entries++; g.done += done;
+    var key = r[E.pid] + "|" + date;
+    var sx = g.shifts[key] = g.shifts[key] || { t: 0, d: 0 };
+    sx.t = Math.max(sx.t, target || 0); sx.d += done;
+    parts[Math.min(parts.length - 1, Math.floor((Number(date.slice(8)) - 1) / 7))].done[r[E.shift]] += done;
+  });
+  var rows = SHIFT_NAMES.map(function (n) {
+    var g = by[n], keys = Object.keys(g.shifts);
+    g.shiftCount = keys.length;
+    g.target = keys.reduce(function (a, k) { return a + g.shifts[k].t; }, 0);
+    g.doneT = keys.reduce(function (a, k) { return a + (g.shifts[k].t > 0 ? g.shifts[k].d : 0); }, 0);
+    g.avg = g.shiftCount ? g.done / g.shiftCount : null;
+    g.pct = g.target ? g.doneT / g.target : null;
+    return g;
+  });
+  var total = rows.reduce(function (a, g) { return a + g.done; }, 0);
+  rows.forEach(function (g) { g.share = total ? g.done / total : null; });
+  var monthName = Utilities.formatDate(ymdParts(refDay), tz, "MMMM yyyy");
+  return { doneT: rows.reduce(function (a, g) { return a + g.doneT; }, 0), rows: rows, parts: parts, total: total, month: monthName, through: refDay,
+    entries: rows.reduce(function (a, g) { return a + g.entries; }, 0), shiftsAll: rows.reduce(function (a, g) { return a + g.shiftCount; }, 0), targetAll: rows.reduce(function (a, g) { return a + g.target; }, 0) };
+}
+
+var SHIFT_COLORS = { Day: "#f2a541", Evening: "#9a8fc9", Night: "#1f6fa8" };
+
+function paintMonthly(sh, m) {
+  titleBand(sh, 8, "Monthly shift comparison", m.month + " (month to date, through " + m.through + ")");
+  sh.getRange(3, 1).setValue(m.total ? "Partials weighed this month: " + m.total.toLocaleString() + " across " + m.shiftsAll + " person-shifts. Counted by the date each entry was saved for." : "No weighing entries this month yet.").setFontColor("#5b6b7a").setFontSize(9);
+  var body = m.rows.map(function (g) { return [g.name, g.entries, g.done, g.shiftCount, g.avg === null ? "" : g.avg, g.target || "", g.pct === null ? "" : g.pct, g.share === null ? "" : g.share]; });
+  body.push(["Total", m.entries, m.total, m.shiftsAll, m.shiftsAll ? m.total / m.shiftsAll : "", m.targetAll || "", m.targetAll ? m.doneT / m.targetAll : "", m.total ? 1 : ""]);
+  paintTable(sh, 5, ["Shift", "Entries", "Partials weighed", "Person-shifts", "Average per person-shift", "Target", "Completion", "Share of month"], body, [null, "0", "#,##0", "0", "#,##0", "#,##0", "0%", "0%"]);
+  m.rows.forEach(function (g, i) { var c = pctColor(g.pct); if (c) sh.getRange(6 + i, 7).setBackground(c); sh.getRange(6 + i, 1).setFontWeight("bold").setFontColor(SHIFT_COLORS[g.name]); });
+  sh.getRange(9, 1, 1, 8).setFontWeight("bold");
+
+  sh.getRange(11, 1).setValue("Partials weighed through the month").setFontWeight("bold").setFontSize(12).setFontColor(NAVY);
+  var pBody = m.parts.map(function (p) { return [p.label, p.done.Day, p.done.Evening, p.done.Night, p.done.Day + p.done.Evening + p.done.Night]; });
+  paintTable(sh, 12, ["Period", "Day", "Evening", "Night", "All shifts"], pBody, [null, "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0;;\"-\"", "#,##0;;\"-\""]);
+  sh.setColumnWidth(1, 150); for (var c = 2; c <= 8; c++) sh.setColumnWidth(c, 125);
+
+  var chartRow = 12 + pBody.length + 3;
+  sh.insertChart(sh.newChart().setChartType(Charts.ChartType.COLUMN).addRange(sh.getRange(5, 1, 4, 1)).addRange(sh.getRange(5, 3, 4, 1))
+    .setOption("title", "Month total by shift").setOption("legend", { position: "none" }).setOption("colors", [NAVY])
+    .setPosition(chartRow, 1, 0, 0).setOption("width", 420).setOption("height", 300).build());
+  sh.insertChart(sh.newChart().setChartType(Charts.ChartType.COLUMN).addRange(sh.getRange(12, 1, pBody.length + 1, 4))
+    .setOption("title", "Day vs Evening vs Night through the month").setOption("legend", { position: "bottom" }).setOption("colors", [SHIFT_COLORS.Day, SHIFT_COLORS.Evening, SHIFT_COLORS.Night])
+    .setPosition(chartRow, 4, 20, 0).setOption("width", 560).setOption("height", 300).build());
+  sh.setFrozenRows(2);
+}
+
+function buildReportBook(w, d) {
+  var tz = Session.getScriptTimeZone(), label = Utilities.formatDate(w.start, tz, "EEE d MMM yyyy h:mm a") + "  to  " + Utilities.formatDate(w.end, tz, "EEE d MMM yyyy h:mm a");
+  var ss = SpreadsheetApp.create("Partials Tracker Daily Report " + Utilities.formatDate(w.end, tz, "yyyy-MM-dd"));
+  ss.setSpreadsheetTimeZone(tz);
+  var sum = ss.getSheets()[0]; sum.setName("Summary"); sum.setHiddenGridlines(true);
+  var wk = ss.insertSheet("Weekly comparison"), mo = ss.insertSheet("Monthly shifts"), wt = ss.insertSheet("Weighed"), rq = ss.insertSheet("Material requests"), sg = ss.insertSheet("Sign-ins");
+  [wk, mo, wt, rq, sg].forEach(function (s) { s.setHiddenGridlines(true); });
+
+  // ---- Summary: title, six tiles, then the two tables
+  titleBand(sum, 6, "Partials Tracker  |  Daily Report", label);
+  var tiles = [["Partials weighed", d.totalDone, "#,##0"], ["Weighing entries", d.entries.length, "0"], ["Material requests", d.reqs.length, "0"],
+    ["Average wait", d.avgWait === null ? "none" : sec2clock(d.avgWait), "@"], ["Longest wait", d.maxWait === null ? "none" : sec2clock(d.maxWait), "@"], ["Sign-ins", d.signedIn, "0"]];
+  tiles.forEach(function (t, i) {
+    sum.getRange(4, i + 1).setValue(t[0]).setFontColor("#5b6b7a").setFontSize(9).setHorizontalAlignment("center").setBackground(PALE);
+    sum.getRange(5, i + 1).setNumberFormat(t[2]).setValue(t[1]).setFontSize(22).setFontWeight("bold").setFontColor(NAVY).setHorizontalAlignment("center").setBackground(PALE);
+    sum.getRange(4, i + 1, 2, 1).setBorder(true, true, true, true, false, false, GRID, SpreadsheetApp.BorderStyle.SOLID);
+  });
+  sum.setRowHeight(5, 44);
+  sum.getRange(6, 1).setValue("Delivered " + d.delivered + "  |  Cancelled " + d.cancelled + "  |  Still waiting " + d.stillOpen + "  |  Weighing entries removed " + d.removed + "  |  Failed sign-ins " + d.failedIn).setFontColor("#5b6b7a").setFontSize(9);
+
+  var row = 8;
+  sum.getRange(row, 1).setValue("Weighers").setFontWeight("bold").setFontSize(12).setFontColor(NAVY);
+  var wBody = d.weighers.map(function (g) { return [g.name, g.entries, g.done, g.target === null ? "" : g.target, g.pct === null ? "" : g.pct]; });
+  paintTable(sum, row + 1, ["Weigher", "Entries", "Partials weighed", "Target", "Completion"], wBody.length ? wBody : [["No entries in this period", "", "", "", ""]], [null, "0", "#,##0", "#,##0", "0%"]);
+  d.weighers.forEach(function (g, i) { var c = pctColor(g.pct); if (c) sum.getRange(row + 2 + i, 5).setBackground(c); });
+  var chartRows = d.weighers.length;
+  row = row + 2 + Math.max(wBody.length, 1) + 1;
+
+  sum.getRange(row, 1).setValue("Pullers").setFontWeight("bold").setFontSize(12).setFontColor(NAVY);
+  var pBody = d.pullers.map(function (g) { return [g.name, g.count, sec2clock(g.avg), sec2clock(g.max)]; });
+  paintTable(sum, row + 1, ["Puller", "Deliveries", "Average wait (m:ss)", "Longest wait (m:ss)"], pBody.length ? pBody : [["No deliveries in this period", "", "", ""]], [null, "0", "@", "@"]);
+  sum.setColumnWidth(1, 190);
+  for (var c = 2; c <= 6; c++) sum.setColumnWidth(c, 130);
+  if (chartRows > 1) {
+    sum.insertChart(sum.newChart().setChartType(Charts.ChartType.COLUMN).addRange(sum.getRange(9, 1, chartRows + 1, 1)).addRange(sum.getRange(9, 3, chartRows + 1, 1))
+      .setOption("title", "Partials weighed by weigher").setOption("legend", { position: "none" }).setOption("colors", [NAVY])
+      .setPosition(row + 4 + Math.max(pBody.length, 1), 1, 0, 0).setOption("width", 640).setOption("height", 280).build());
+  }
+  sum.setFrozenRows(2);
+
+  // ---- Weighed
+  titleBand(wt, 9, "Partials weighed", label);
+  paintTable(wt, 4, ["Saved at", "Weigher", "Name entered", "For date", "Shift", "Partials weighed", "Partials in batch", "Target", "Completion"],
+    d.entries.map(function (e) { return [new Date(e.at), e.name, e.typed, e.date, e.shift, e.done, e.book === null ? "" : e.book, e.target === null ? "" : e.target, e.target ? e.done / e.target : ""]; }),
+    ["yyyy-mm-dd hh:mm", null, null, "@", null, "#,##0", "#,##0", "#,##0", "0%"]);
+  d.entries.forEach(function (e, i) { var c = pctColor(e.target ? e.done / e.target : null); if (c) wt.getRange(5 + i, 9).setBackground(c); });
+  [150, 150, 150, 100, 80, 120, 120, 90, 100].forEach(function (x, i) { wt.setColumnWidth(i + 1, x); });
+  wt.setFrozenRows(4);
+
+  // ---- Material requests
+  titleBand(rq, 7, "Material requests", label);
+  paintTable(rq, 4, ["Requested at", "Weigher", "Materials requested", "Status", "Delivered at", "Delivered by", "Wait (h:mm:ss)"],
+    d.reqs.map(function (q) { return [new Date(q.at), q.name, q.item, q.status, q.done ? new Date(q.done) : "", q.by, q.wait === null ? "" : q.wait / 86400]; }),
+    ["yyyy-mm-dd hh:mm", null, null, null, "yyyy-mm-dd hh:mm", null, "[h]:mm:ss"]);
+  rq.getRange(5, 3, Math.max(d.reqs.length, 1), 1).setWrap(true);
+  [150, 150, 380, 90, 150, 150, 110].forEach(function (x, i) { rq.setColumnWidth(i + 1, x); });
+  rq.setFrozenRows(4);
+
+  // ---- Sign-ins
+  titleBand(sg, 3, "Sign-ins", label);
+  paintTable(sg, 4, ["Time", "ID", "Result"], d.logins.map(function (l) { return [new Date(l.at), l.id, l.result]; }), ["yyyy-mm-dd hh:mm:ss", null, null]);
+  d.logins.forEach(function (l, i) { if (l.result !== "signed in") sg.getRange(5 + i, 3).setBackground("#fbebeb"); });
+  [160, 120, 140].forEach(function (x, i) { sg.setColumnWidth(i + 1, x); });
+  sg.setFrozenRows(4);
+  paintWeekly(wk, weeklyData(w), label);
+  paintMonthly(mo, monthlyData(w));
+  SpreadsheetApp.flush();
+  return { ss: ss, label: label };
+}
+
+// builds the workbook for any period, emails it to TO and returns the totals
+function emailReport(w, who) {
+  var d = reportData(w), tz = Session.getScriptTimeZone();
+  var built = buildReportBook(w, d);
+  var file = DriveApp.getFileById(built.ss.getId());
+  var stamp = Utilities.formatDate(w.start, tz, "yyyy-MM-dd HHmm") + " to " + Utilities.formatDate(w.end, tz, "yyyy-MM-dd HHmm");
+  var res = UrlFetchApp.fetch("https://docs.google.com/spreadsheets/d/" + built.ss.getId() + "/export?format=xlsx", { headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) { file.setTrashed(true); throw new Error("Excel export failed (" + res.getResponseCode() + ")"); }
+  var xlsx = res.getBlob().setName("Partials Tracker Report " + stamp + ".xlsx");
+  var lines = ["Partials Tracker report", built.label, "Sent by " + who, "",
+    "Partials weighed: " + d.totalDone + " in " + d.entries.length + " entries",
+    "Material requests: " + d.reqs.length + " (delivered " + d.delivered + ", cancelled " + d.cancelled + ", still waiting " + d.stillOpen + ")",
+    "Average wait: " + (d.avgWait === null ? "none" : sec2clock(d.avgWait)) + "   Longest wait: " + (d.maxWait === null ? "none" : sec2clock(d.maxWait)),
+    "Sign-ins: " + d.signedIn + ", failed attempts: " + d.failedIn, "",
+    "The full workbook is attached (Summary, Weekly comparison, Monthly shifts, Weighed, Material requests, Sign-ins)."];
+  MailApp.sendEmail({ to: TO, subject: "[Partials Tracker] Report " + Utilities.formatDate(w.start, tz, "MMM d h:mm a") + " to " + Utilities.formatDate(w.end, tz, "MMM d h:mm a"), body: lines.join("\n"), attachments: [xlsx], name: "Partials Tracker" });
+  file.setTrashed(true);
+  return d;
+}
+
+// the Send report button (supervisors only); the supervisor chooses the period
+function sendReport(d, s) {
+  var from = Number(d.from), to = Number(d.to), now = Date.now();
+  if (!isFinite(from) || !isFinite(to) || to <= from || to - from > 7 * 86400000 || to > now + 120000 || from < now - 90 * 86400000) return { ok: false, error: "range" };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var props = PropertiesService.getScriptProperties(), day = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+    var st = JSON.parse(props.getProperty("reports") || "{}");
+    if (st.day !== day) { st.day = day; st.count = 0; }
+    if (st.count >= MAX_REPORTS_PER_DAY) return { ok: false, error: "limit" };
+    st.count++;
+    props.setProperty("reports", JSON.stringify(st));
+  } finally {
+    lock.releaseLock();
+  }
+  var r = emailReport({ start: new Date(from), end: new Date(Math.min(to, now)) }, s.name + " (" + s.id + ")");
+  return { ok: true, weighed: r.totalDone, entries: r.entries.length, requests: r.reqs.length };
+}
+
+// run from the editor to send a test copy of the last finished 6-to-6 period
+function testReport() {
+  emailReport(reportWindow(new Date()), "the script editor");
+  Logger.log("Report sent to " + TO);
 }
