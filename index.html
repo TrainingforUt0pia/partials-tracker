@@ -210,6 +210,13 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     </div>
   </section>
 
+  <section class="card a-only" aria-labelledby="aoH">
+    <h2 id="aoH">Open material requests</h2>
+    <p class="note">Every request still waiting. Reset timer starts the clock again from now; Close request stops it. Both are recorded with your name.</p>
+    <div class="rows" id="adminOpen"></div>
+    <p class="msg" id="aoMsg" role="status"></p>
+  </section>
+
   <section class="card a-only" aria-labelledby="atH">
     <h2 id="atH">Daily target</h2>
     <p class="note">The number of partials each weigher is measured against per shift. It applies to the chosen date and every later date until you change it.</p>
@@ -772,14 +779,43 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     syncStarted = true;
     setInterval(function () {
       if (document.hidden || !session) return;
-      if (document.body.getAttribute("data-role") === "puller") refreshOpen();
+      if (["puller", "admin"].indexOf(document.body.getAttribute("data-role")) >= 0) refreshOpen();
       else if (cloud.some(function (r) { return r.status === "open"; })) refreshMine();
       syncEntries();
     }, 10000);
     document.addEventListener("visibilitychange", function () { if (!document.hidden && session) { refreshMine(); refreshOpen(); syncEntries(); loadTargets(); } });
   }
 
+  function renderAdminOpen() {
+    var box = $("adminOpen"); box.textContent = "";
+    if (!openReqs.length) { var em = document.createElement("div"); em.className = "empty"; em.textContent = syncErr || "No requests waiting."; box.appendChild(em); return; }
+    openReqs.slice().sort(function (x, y) { return x.at - y.at; }).forEach(function (r) {
+      var row = document.createElement("div"); row.className = "row pending";
+      var left = document.createElement("div");
+      var n = document.createElement("div"); n.className = "name"; n.textContent = r.name;
+      var s = document.createElement("div"); s.className = "sub"; s.textContent = "Asked at " + clock(r.at);
+      var what = document.createElement("div"); what.textContent = r.item || "(nothing written)"; what.style.cssText = "margin-top:4px;font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere";
+      left.appendChild(n); left.appendChild(s); left.appendChild(what);
+      var w = document.createElement("div"); w.className = "wait"; w.dataset.since = r.at; w.textContent = dur(srv() - r.at);
+      var btns = document.createElement("div"); btns.className = "actions"; btns.style.gridColumn = "1 / -1";
+      function act(label, action, done) {
+        var b = document.createElement("button"); b.type = "button"; b.className = "ghost small"; b.textContent = label;
+        armed(b, label, function () {
+          api({ action: action, id: r.id }).then(function (j) {
+            if (j && j.ok) { say("aoMsg", done); return refreshOpen(); }
+            if (j && (j.error === "auth" || j.error === "ack")) return;
+            say("aoMsg", "That request is already closed.", true); return refreshOpen();
+          }).catch(function (e) { say("aoMsg", netMsg(e), true); });
+        });
+        btns.appendChild(b);
+      }
+      act("Reset timer", "adminReset", "Timer restarted for " + r.name + ".");
+      act("Close request", "adminClose", "Request closed.");
+      row.appendChild(left); row.appendChild(w); row.appendChild(btns); box.appendChild(row);
+    });
+  }
   function renderRequests() {
+    renderAdminOpen();
     $("reqNote").textContent = syncErr;
     $("reqBtn").disabled = !configured();
 
@@ -809,7 +845,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     var day = cloud.filter(function (r) { return r.at && dateOf(r.at) === date; });
     var done = day.filter(function (r) { return r.status === "delivered" && r.done; });
     var waits = done.map(function (r) { return r.done - r.at; });
-    $("rCount").textContent = day.filter(function (r) { return r.status !== "cancelled"; }).length;
+    $("rCount").textContent = day.filter(function (r) { return r.status !== "cancelled" && r.status !== "reset"; }).length;
     $("rAvg").textContent = waits.length ? dur(waits.reduce(function (a, c) { return a + c; }, 0) / waits.length) : "–";
     $("rMax").textContent = waits.length ? dur(Math.max.apply(null, waits)) : "–";
     var box = $("reqDone"); box.textContent = "";
@@ -818,7 +854,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
       var left = document.createElement("div");
       var n = document.createElement("div"); n.className = "name"; n.textContent = r.name;
       var s = document.createElement("div"); s.className = "sub";
-      s.textContent = r.status === "delivered" ? clock(r.at) + " to " + clock(r.done) + " · delivered by " + (r.by || "puller") + (r.item ? " · " + r.item : "") : clock(r.at) + " · cancelled" + (r.item ? " · " + r.item : "");
+      s.textContent = r.status === "delivered" ? clock(r.at) + " to " + clock(r.done) + " · delivered by " + (r.by || "puller") + (r.item ? " · " + r.item : "") : clock(r.at) + (r.status === "reset" ? " · timer reset by a supervisor" : " · cancelled") + (r.item ? " · " + r.item : "");
       left.appendChild(n); left.appendChild(s);
       var w = document.createElement("div"); w.className = "pct none"; w.textContent = r.status === "delivered" ? dur(r.done - r.at) : "–";
       row.appendChild(left); row.appendChild(w); box.appendChild(row);
@@ -1277,7 +1313,7 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
     box.appendChild(left); box.appendChild(big); box.appendChild(b); box.hidden = false;
   }
   function loadAdmin() {
-    loadTargets();
+    loadTargets(); refreshOpen();
     api({ action: "people" }).then(function (j) {
       var box = $("people"); box.textContent = "";
       if (!j || !j.ok) { say("admMsg", "Could not load the list.", true); return; }
@@ -1296,6 +1332,16 @@ textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border
         var st = document.createElement("button"); st.type = "button"; st.className = "ghost small"; st.textContent = p.status === "active" ? "Revoke access" : "Restore access";
         armed(st, st.textContent, function () { api({ action: "setStatus", id: p.id, status: p.status === "active" ? "revoked" : "active" }).then(function (r) { if (r && r.ok) loadAdmin(); else say("admMsg", r && r.error === "self" ? "You cannot revoke yourself." : "Could not change access.", true); }); });
         btns.appendChild(rp); btns.appendChild(st);
+        if (p.status !== "active") {
+          var rm = document.createElement("button"); rm.type = "button"; rm.className = "ghost small"; rm.textContent = "Remove person";
+          armed(rm, "Remove person", function () {
+            api({ action: "deletePerson", id: p.id }).then(function (r) {
+              if (r && r.ok) { say("admMsg", p.name + " was removed."); loadAdmin(); }
+              else say("admMsg", r && r.error === "self" ? "You cannot remove yourself." : r && r.error === "active" ? "Revoke access first." : "Could not remove the person.", true);
+            }).catch(function (e) { say("admMsg", netMsg(e), true); });
+          });
+          btns.appendChild(rm);
+        }
         row.appendChild(left); row.appendChild(pill); row.appendChild(btns); box.appendChild(row);
       });
     }).catch(function (e) { say("admMsg", netMsg(e), true); });

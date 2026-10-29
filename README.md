@@ -77,3 +77,9 @@ A supervisor opens the Admin page, picks a From and To time (or taps "Last full 
 4. Deploy > Manage deployments > pencil > New version > Deploy.
 
 A note on IDs: all-digit badge IDs such as 2614 are stored as plain text in the Sheet (the script formats the ID columns as text and always compares IDs as text). An older version stored them as numbers, which made those people unable to sign in, reset or revoke.
+
+## Removing people
+Revoke access first (Admin > the person > Revoke access). A revoked person then shows a **Remove person** button; tap it twice to delete them from the People tab. Their ID, name, role and who removed them are kept in the Sheet tab Removed people, and their past entries and requests stay. You cannot remove yourself or someone who is still active.
+
+## Supervisor control of the stopwatch
+The Admin page has an Open material requests card listing every request still waiting with its running timer. **Reset timer** (tap twice) closes the request as "reset" and starts an identical one from now; **Close request** stops it as "cancelled". Both rows stay in the Requests tab with "Reset by NAME" or "Closed by NAME", reset rows are left out of the request counts and wait averages, and the report shows how many timers were reset.

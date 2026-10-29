@@ -33,6 +33,7 @@ var TABS = {
   acks:     { name: "Acknowledgments", dateCols: ["B"], textCols: ["A", "C"], headers: ["ackId", "signedAt", "personId", "registeredName", "typedName", "nameMatches", "role", "letterVersion", "letterHash", "device", "signatureFile", "method"] },
   entries:  { name: "Entries", dateCols: ["B", "L"], textCols: ["A", "C", "F"], headers: ["entryId", "savedAt", "personId", "registeredName", "typedName", "date", "shift", "done", "book", "target", "status", "removedAt", "device"] },
   targets:  { name: "Targets", dateCols: ["C"], textCols: ["A", "D"], headers: ["date", "target", "setAt", "setById", "setBy"] },
+  removed:  { name: "Removed people", dateCols: ["D", "F"], textCols: ["A"], headers: ["personId", "name", "role", "removedAt", "removedBy", "createdAt"] },
   signins:  { name: "Sign-ins", dateCols: ["A"], textCols: ["B"], headers: ["time", "personId", "result", "device"] },
   letter:   { name: "Letter" }
 };
@@ -61,7 +62,7 @@ var LETTER_DRAFT = [
 
 function setup() {
   var ss = spreadsheet();
-  tab("requests"); tab("people"); tab("acks"); tab("signins"); tab("entries"); tab("targets");
+  tab("requests"); tab("people"); tab("acks"); tab("signins"); tab("entries"); tab("targets"); tab("removed");
   var lt = tab("letter");
   if (lt.getLastRow() === 0) seedLetter(lt);
   var s1 = ss.getSheetByName("Sheet1");
@@ -346,7 +347,7 @@ function route(a, d, s) {
   if (a === "targets") return can(s, WEIGHER) ? { ok: true, targets: targetMap() } : { ok: false, error: "role" };
   if (a === "signins") return can(s, ADMIN) ? recentSignins() : { ok: false, error: "role" };
   if (a === "sendReport") return can(s, ADMIN) ? sendReport(d, s) : { ok: false, error: "role" };
-  var need = { request: WEIGHER, cancel: WEIGHER, handoff: WEIGHER, saveEntry: WEIGHER, removeEntry: WEIGHER, setTarget: ADMIN, deliver: PULLER, addPerson: ADMIN, resetPin: ADMIN, setStatus: ADMIN };
+  var need = { request: WEIGHER, cancel: WEIGHER, handoff: WEIGHER, saveEntry: WEIGHER, removeEntry: WEIGHER, setTarget: ADMIN, deliver: PULLER, addPerson: ADMIN, resetPin: ADMIN, setStatus: ADMIN, deletePerson: ADMIN, adminClose: ADMIN, adminReset: ADMIN };
   if (!need[a]) return { ok: false, error: "action" };
   if (!can(s, need[a])) return { ok: false, error: "role" };
   var lock = LockService.getScriptLock();
@@ -362,6 +363,9 @@ function route(a, d, s) {
     if (a === "addPerson") return addPerson(d, s);
     if (a === "resetPin") return resetPin(d, s);
     if (a === "setStatus") return setStatus(d, s);
+    if (a === "deletePerson") return deletePerson(d, s);
+    if (a === "adminClose") return adminClose(d, s);
+    if (a === "adminReset") return adminReset(d, s);
   } finally {
     lock.releaseLock();
   }
@@ -451,7 +455,7 @@ function openRequests() {
   var tz = Session.getScriptTimeZone(), today = Utilities.formatDate(new Date(), tz, "yyyy-MM-dd");
   var waits = [], count = 0;
   rows.forEach(function (o) {
-    if (o.at && o.status !== "cancelled" && Utilities.formatDate(new Date(o.at), tz, "yyyy-MM-dd") === today) {
+    if (o.at && o.status !== "cancelled" && o.status !== "reset" && Utilities.formatDate(new Date(o.at), tz, "yyyy-MM-dd") === today) {
       count++;
       if (o.status === "delivered" && o.done) waits.push((o.done - o.at) / 1000);
     }
@@ -467,6 +471,24 @@ function deliver(d, s) {
   var now = Date.now();
   sh.getRange(hit.row, R.status + 1, 1, 5).setValues([["delivered", new Date(now), s.id, s.name, Math.round((now - ms(hit.values[R.at])) / 1000)]]);
   return { ok: true };
+}
+
+// a supervisor can stop any waiting request. Nothing is erased: the row stays with who closed it and when.
+function adminClose(d, s) {
+  var sh = tab("requests"), hit = findRequest(sh, String(d.id || ""));
+  if (!hit || hit.values[R.status] !== "open") return { ok: false, error: "closed" };
+  sh.getRange(hit.row, R.status + 1, 1, 4).setValues([["cancelled", new Date(), s.id, "Closed by " + s.name]]);
+  return { ok: true };
+}
+
+// restarts the stopwatch: the old row is closed as "reset" (kept, with who did it) and an identical open request starts from now
+function adminReset(d, s) {
+  var sh = tab("requests"), hit = findRequest(sh, String(d.id || ""));
+  if (!hit || hit.values[R.status] !== "open") return { ok: false, error: "closed" };
+  var now = Date.now(), v = hit.values, id = Utilities.getUuid().replace(/-/g, "").slice(0, 12);
+  sh.getRange(hit.row, R.status + 1, 1, 4).setValues([["reset", new Date(now), s.id, "Reset by " + s.name]]);
+  sh.appendRow([id, new Date(now), str(v[R.pid]), v[R.name], v[R.item], "open", "", "", "", "", v[R.device]]);
+  return { ok: true, id: id, at: now };
 }
 
 // ---------------------------------------------------------------- supervisor administration
@@ -510,6 +532,18 @@ function setStatus(d, s) {
   if (p.id === s.id) return { ok: false, error: "self" };                   // a supervisor cannot lock themselves out
   tab("people").getRange(p.row, P.status + 1).setValue(status);
   if (status === "revoked") endSessions(p.id);
+  return { ok: true };
+}
+
+// removes a person who has already been revoked; a line in "Removed people" keeps who they were and who removed them
+function deletePerson(d, s) {
+  var p = findPerson(normId(d.id));
+  if (!p) return { ok: false, error: "missing" };
+  if (p.id === s.id) return { ok: false, error: "self" };
+  if (p.status !== "revoked") return { ok: false, error: "active" };         // revoke first, then remove
+  tab("removed").appendRow([p.id, p.name, p.role, new Date(), s.id + " " + s.name, p.created ? new Date(p.created) : ""]);
+  endSessions(p.id);
+  tab("people").deleteRow(p.row);
   return { ok: true };
 }
 
@@ -659,6 +693,8 @@ function reportData(w) {
     totalDone: entries.reduce(function (a, e) { return a + e.done; }, 0),
     delivered: waits.length,
     cancelled: reqs.filter(function (q) { return q.status === "cancelled"; }).length,
+    resets: reqs.filter(function (q) { return q.status === "reset"; }).length,
+    requestCount: reqs.filter(function (q) { return q.status !== "reset"; }).length,
     stillOpen: reqs.filter(function (q) { return q.status === "open"; }).length,
     avgWait: waits.length ? waits.reduce(function (a, c) { return a + c; }, 0) / waits.length : null,
     maxWait: waits.length ? Math.max.apply(null, waits) : null,
@@ -863,7 +899,7 @@ function buildReportBook(w, d) {
 
   // ---- Summary: title, six tiles, then the two tables
   titleBand(sum, 6, "Partials Tracker  |  Daily Report", label);
-  var tiles = [["Partials weighed", d.totalDone, "#,##0"], ["Weighing entries", d.entries.length, "0"], ["Material requests", d.reqs.length, "0"],
+  var tiles = [["Partials weighed", d.totalDone, "#,##0"], ["Weighing entries", d.entries.length, "0"], ["Material requests", d.requestCount, "0"],
     ["Average wait", d.avgWait === null ? "none" : sec2clock(d.avgWait), "@"], ["Longest wait", d.maxWait === null ? "none" : sec2clock(d.maxWait), "@"], ["Sign-ins", d.signedIn, "0"]];
   tiles.forEach(function (t, i) {
     sum.getRange(4, i + 1).setValue(t[0]).setFontColor("#5b6b7a").setFontSize(9).setHorizontalAlignment("center").setBackground(PALE);
@@ -871,7 +907,7 @@ function buildReportBook(w, d) {
     sum.getRange(4, i + 1, 2, 1).setBorder(true, true, true, true, false, false, GRID, SpreadsheetApp.BorderStyle.SOLID);
   });
   sum.setRowHeight(5, 44);
-  sum.getRange(6, 1).setValue("Delivered " + d.delivered + "  |  Cancelled " + d.cancelled + "  |  Still waiting " + d.stillOpen + "  |  Weighing entries removed " + d.removed + "  |  Failed sign-ins " + d.failedIn).setFontColor("#5b6b7a").setFontSize(9);
+  sum.getRange(6, 1).setValue("Delivered " + d.delivered + "  |  Cancelled " + d.cancelled + "  |  Still waiting " + d.stillOpen + "  |  Timers reset by a supervisor " + d.resets + "  |  Weighing entries removed " + d.removed + "  |  Failed sign-ins " + d.failedIn).setFontColor("#5b6b7a").setFontSize(9);
 
   var row = 8;
   sum.getRange(row, 1).setValue("Weighers").setFontWeight("bold").setFontSize(12).setFontColor(NAVY);
@@ -934,7 +970,7 @@ function emailReport(w, who) {
   var xlsx = res.getBlob().setName("Partials Tracker Report " + stamp + ".xlsx");
   var lines = ["Partials Tracker report", built.label, "Sent by " + who, "",
     "Partials weighed: " + d.totalDone + " in " + d.entries.length + " entries",
-    "Material requests: " + d.reqs.length + " (delivered " + d.delivered + ", cancelled " + d.cancelled + ", still waiting " + d.stillOpen + ")",
+    "Material requests: " + d.requestCount + " (delivered " + d.delivered + ", cancelled " + d.cancelled + ", still waiting " + d.stillOpen + ")",
     "Average wait: " + (d.avgWait === null ? "none" : sec2clock(d.avgWait)) + "   Longest wait: " + (d.maxWait === null ? "none" : sec2clock(d.maxWait)),
     "Sign-ins: " + d.signedIn + ", failed attempts: " + d.failedIn, "",
     "The full workbook is attached (Summary, Weekly comparison, Monthly shifts, Weighed, Material requests, Sign-ins)."];
@@ -960,7 +996,7 @@ function sendReport(d, s) {
     lock.releaseLock();
   }
   var r = emailReport({ start: new Date(from), end: new Date(Math.min(to, now)) }, s.name + " (" + s.id + ")");
-  return { ok: true, weighed: r.totalDone, entries: r.entries.length, requests: r.reqs.length };
+  return { ok: true, weighed: r.totalDone, entries: r.entries.length, requests: r.requestCount };
 }
 
 // run from the editor to send a test copy of the last finished 6-to-6 period
